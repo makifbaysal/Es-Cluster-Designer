@@ -222,11 +222,12 @@ export function EsConnectionPanel({ setCluster, setIndices }: Props) {
             setProbe(null);
           }}
         />
-        <p className="es-proxy-footnote">
-          {shouldUseElasticsearchProxy()
-            ? "Traffic is proxied through this dev server (no ES CORS). For production builds, use npm run preview from http://127.0.0.1 or http://localhost, or configure Elasticsearch CORS."
-            : "This origin talks to Elasticsearch directly — the cluster must allow CORS, or open the UI from http://127.0.0.1 with npm run dev / preview."}
-        </p>
+        {shouldUseElasticsearchProxy() && (
+          <p className="es-proxy-footnote">
+            Traffic is proxied through this dev server (no ES CORS). For production builds, use npm
+            run preview from http://127.0.0.1 or http://localhost, or configure Elasticsearch CORS.
+          </p>
+        )}
 
         <div className="cluster-toggle-row">
           <span className="index-shard-label">Authentication</span>

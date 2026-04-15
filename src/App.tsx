@@ -119,7 +119,7 @@ function ConfigurationSection({
       )}
       <div className="config-accordion-stack">
         <BaklavaAccordionGroup multiple>
-          <BaklavaAccordion caption="Connect Cluster" open>
+          <BaklavaAccordion caption="Connect Cluster (Optional)" open>
             <EsConnectionPanel setCluster={setCluster} setIndices={setIndices} />
           </BaklavaAccordion>
           <BaklavaAccordion caption="Cluster" open>
