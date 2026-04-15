@@ -12,6 +12,8 @@ type Props = {
   onAdd: () => void;
   onRemove: (id: string) => void;
   onOpenMapping: (id: string) => void;
+  /** When true, omit outer panel shell (used inside accordion). */
+  embedded?: boolean;
 };
 
 export function IndexList({
@@ -20,10 +22,10 @@ export function IndexList({
   onAdd,
   onRemove,
   onOpenMapping,
+  embedded,
 }: Props) {
-  return (
-    <section className="panel">
-      <h2 className="panel-title">Indices</h2>
+  const inner = (
+    <>
       <div className="actions-row index-section-actions">
         <BaklavaButton variant="primary" onBlClick={onAdd}>
           Add index
@@ -43,6 +45,17 @@ export function IndexList({
           ))}
         </BaklavaAccordionGroup>
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="index-list-inner">{inner}</div>;
+  }
+
+  return (
+    <section className="panel">
+      <h2 className="panel-title">Indices</h2>
+      {inner}
     </section>
   );
 }

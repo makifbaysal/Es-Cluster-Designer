@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
-import { BaklavaAlert } from "./baklava/components";
+import {
+  BaklavaAccordion,
+  BaklavaAccordionGroup,
+  BaklavaAlert,
+} from "./baklava/components";
 import { ClusterConfigForm } from "./components/ClusterConfigForm";
+import { EsConnectionPanel } from "./components/EsConnectionPanel";
 import { ComparePanel } from "./components/ComparePanel";
 import { Header } from "./components/Header";
 import { IndexList } from "./components/IndexList";
@@ -112,17 +117,33 @@ function ConfigurationSection({
           onBlClose={() => setImportError(null)}
         />
       )}
-      <ClusterConfigForm cluster={cluster} onChange={setCluster} />
-      <IndexList
-        indices={indices}
-        onChangeIndex={updateIndex}
-        onAdd={addIndex}
-        onRemove={removeIndex}
-        onOpenMapping={(id) => {
-          setMappingIndexId(id);
-          setMappingOpen(true);
-        }}
-      />
+      <div className="config-accordion-stack">
+        <BaklavaAccordionGroup multiple>
+          <BaklavaAccordion caption="Connect Cluster" open>
+            <EsConnectionPanel setCluster={setCluster} setIndices={setIndices} />
+          </BaklavaAccordion>
+          <BaklavaAccordion caption="Cluster" open>
+            <ClusterConfigForm
+              cluster={cluster}
+              onChange={setCluster}
+              embedded
+            />
+          </BaklavaAccordion>
+          <BaklavaAccordion caption="Indices" open>
+            <IndexList
+              indices={indices}
+              onChangeIndex={updateIndex}
+              onAdd={addIndex}
+              onRemove={removeIndex}
+              embedded
+              onOpenMapping={(id) => {
+                setMappingIndexId(id);
+                setMappingOpen(true);
+              }}
+            />
+          </BaklavaAccordion>
+        </BaklavaAccordionGroup>
+      </div>
       <MappingModal
         open={mappingOpen}
         index={mappingIndex}

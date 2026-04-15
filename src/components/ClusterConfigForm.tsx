@@ -4,9 +4,11 @@ import { BaklavaInput } from "../baklava/components";
 type Props = {
   cluster: ClusterConfig;
   onChange: (next: ClusterConfig) => void;
+  /** When true, omit outer panel shell (used inside accordion). */
+  embedded?: boolean;
 };
 
-export function ClusterConfigForm({ cluster, onChange }: Props) {
+export function ClusterConfigForm({ cluster, onChange, embedded }: Props) {
   const patch = (partial: Partial<ClusterConfig>) => {
     onChange({ ...cluster, ...partial });
   };
@@ -15,10 +17,8 @@ export function ClusterConfigForm({ cluster, onChange }: Props) {
   const coldNodeCount = cluster.coldNodeCount ?? 0;
   const ilmEnabled = warmNodeCount > 0 || coldNodeCount > 0;
 
-  return (
-    <section className="panel">
-      <h2 className="panel-title">Cluster</h2>
-
+  const inner = (
+    <>
       <div className="field-grid cols-2">
         <BaklavaInput
           type="number"
@@ -151,6 +151,17 @@ export function ClusterConfigForm({ cluster, onChange }: Props) {
           Set warm or cold node count &gt; 0 and configure index retention to enable ILM tier breakdown.
         </p>
       )}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="cluster-form-inner">{inner}</div>;
+  }
+
+  return (
+    <section className="panel">
+      <h2 className="panel-title">Cluster</h2>
+      {inner}
     </section>
   );
 }
