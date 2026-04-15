@@ -62,6 +62,8 @@ export function shouldUseElasticsearchProxy(): boolean {
   if (typeof window === "undefined") return false;
   const { hostname, protocol } = window.location;
   if (protocol !== "http:" && protocol !== "https:") return false;
+  // Dev server always mounts `elasticDevProxyPlugin` — use it for any hostname (e.g. vite --host / LAN IP).
+  if (import.meta.env.DEV) return true;
   const h = hostname.toLowerCase();
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]";
 }

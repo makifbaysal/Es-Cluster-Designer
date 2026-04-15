@@ -224,7 +224,7 @@ export function EsConnectionPanel({ setCluster, setIndices }: Props) {
         />
         <p className="es-proxy-footnote">
           {shouldUseElasticsearchProxy()
-            ? "Local dev: use npm run dev or npm run preview so traffic is proxied (no ES CORS). Plain static hosts (serve dist/, nginx, file://) will not load the proxy and cluster calls will fail."
+            ? "Traffic is proxied through this dev server (no ES CORS). For production builds, use npm run preview from http://127.0.0.1 or http://localhost, or configure Elasticsearch CORS."
             : "This origin talks to Elasticsearch directly — the cluster must allow CORS, or open the UI from http://127.0.0.1 with npm run dev / preview."}
         </p>
 
