@@ -1,12 +1,14 @@
 import type {
   CalculationResult,
   ClusterConfig,
+  ClusterLimitsHint,
   HeapBreakdown,
   IlmBreakdown,
   IndexBreakdown,
   IndexConfig,
   NodeBreakdown,
   TierBreakdown,
+  WorkloadProfile,
 } from "../types";
 import { buildRecommendations } from "./recommender";
 import { collectWarnings } from "./limitChecker";
@@ -18,8 +20,23 @@ const BASE_OVERHEAD_FACTOR = 1.15;
 const WRITE_DOMINANT_OVERHEAD_FACTOR = 1.30;
 
 const FIELD_DATA_CACHE_RATIO = 0.15;
-const QUERY_BUFFER_RATIO = 0.10;
-const INDEXING_BUFFER_RATIO = 0.10;
+const QUERY_BUFFER_RATIO = 0.1;
+const INDEXING_BUFFER_RATIO = 0.1;
+
+function workloadHeapRatios(profile: WorkloadProfile | undefined): {
+  field: number;
+  query: number;
+  indexing: number;
+  diskTune: number;
+} {
+  if (profile === "search_heavy") {
+    return { field: 0.22, query: 0.18, indexing: 0.08, diskTune: 1.04 };
+  }
+  if (profile === "ingest_heavy") {
+    return { field: 0.11, query: 0.08, indexing: 0.14, diskTune: 1.15 };
+  }
+  return { field: FIELD_DATA_CACHE_RATIO, query: QUERY_BUFFER_RATIO, indexing: INDEXING_BUFFER_RATIO, diskTune: 1 };
+}
 
 function indexTotalShards(idx: IndexConfig): number {
   return idx.primaryShardCount * (1 + idx.replicaShardCount);
@@ -48,11 +65,12 @@ export function buildIndexBreakdown(idx: IndexConfig): IndexBreakdown {
 function buildHeapBreakdown(
   memoryPerNodeGb: number,
   heapGb: number,
-  hotDataPerNodeGb: number
+  hotDataPerNodeGb: number,
+  ratios: { field: number; query: number; indexing: number }
 ): HeapBreakdown {
-  const fieldDataCacheGb = heapGb * FIELD_DATA_CACHE_RATIO;
-  const queryBufferGb = heapGb * QUERY_BUFFER_RATIO;
-  const indexingBufferGb = heapGb * INDEXING_BUFFER_RATIO;
+  const fieldDataCacheGb = heapGb * ratios.field;
+  const queryBufferGb = heapGb * ratios.query;
+  const indexingBufferGb = heapGb * ratios.indexing;
   const availableGb = Math.max(
     0,
     heapGb - fieldDataCacheGb - queryBufferGb - indexingBufferGb
@@ -103,7 +121,8 @@ function indexColdDataGb(idx: IndexConfig): number {
 function buildIlmBreakdown(
   cluster: ClusterConfig,
   indices: IndexConfig[],
-  overheadFactor: number
+  overheadFactor: number,
+  growthExtraGb: number
 ): IlmBreakdown {
   const warmNodeCount = cluster.warmNodeCount ?? 0;
   const coldNodeCount = cluster.coldNodeCount ?? 0;
@@ -124,6 +143,10 @@ function buildIlmBreakdown(
     } else {
       hotDataGb += indexDataWithReplicasGb(idx);
     }
+  }
+
+  if (growthExtraGb > 0) {
+    hotDataGb += growthExtraGb;
   }
 
   hotDataGb *= overheadFactor;
@@ -162,15 +185,18 @@ function buildIlmBreakdown(
 
 export function calculateCluster(
   cluster: ClusterConfig,
-  indices: IndexConfig[]
+  indices: IndexConfig[],
+  limits?: ClusterLimitsHint
 ): CalculationResult {
   const dataNodeCount = Math.max(0, cluster.dataNodeCount);
   const masterNodeCount = Math.max(0, cluster.masterNodeCount);
   const heapGb = heapPerNodeGb(cluster.memoryPerNode);
   const maxShardsPerNode = maxShardsForHeap(heapGb);
-  const diskOverheadFactor = cluster.writeDominant
+  const wr = workloadHeapRatios(cluster.workloadProfile);
+  const baseDisk = cluster.writeDominant
     ? WRITE_DOMINANT_OVERHEAD_FACTOR
     : BASE_OVERHEAD_FACTOR;
+  const diskOverheadFactor = Math.min(1.45, baseDisk * wr.diskTune);
 
   const indexBreakdowns = indices.map(buildIndexBreakdown);
 
@@ -178,6 +204,9 @@ export function calculateCluster(
   for (const idx of indices) {
     totalHotDataGb += indexHotDataGb(idx);
   }
+  const growthExtraGb =
+    Math.max(0, cluster.growthGbPerDay ?? 0) * Math.max(0, cluster.growthProjectionDays ?? 0);
+  totalHotDataGb += growthExtraGb;
   totalHotDataGb *= diskOverheadFactor;
   const hotDataPerNodeGb =
     dataNodeCount > 0 ? totalHotDataGb / dataNodeCount : 0;
@@ -185,7 +214,8 @@ export function calculateCluster(
   const heapBreakdown = buildHeapBreakdown(
     cluster.memoryPerNode,
     heapGb,
-    hotDataPerNodeGb
+    hotDataPerNodeGb,
+    { field: wr.field, query: wr.query, indexing: wr.indexing }
   );
 
   let totalPrimaryShards = 0;
@@ -202,8 +232,11 @@ export function calculateCluster(
     totalReadRate += idx.readRate;
   }
 
+  const totalDataWithGrowthGb = totalDataWithReplicasGb + growthExtraGb;
   const diskTotal = cluster.totalDiskSize > 0 ? cluster.totalDiskSize : 1;
-  const dataWithOverheadGb = totalDataWithReplicasGb * diskOverheadFactor;
+  const dataWithOverheadGb = totalDataWithGrowthGb * diskOverheadFactor;
+  const roughSnapshotRepoGb = dataWithOverheadGb * 1.08;
+  const roughSnapshotDurationHours = Math.max(0.25, roughSnapshotRepoGb / 120);
   const estimatedDiskUsagePercent = Math.min(
     100,
     (dataWithOverheadGb / diskTotal) * 100
@@ -255,7 +288,7 @@ export function calculateCluster(
     });
   }
 
-  const ilmBreakdown = buildIlmBreakdown(cluster, indices, diskOverheadFactor);
+  const ilmBreakdown = buildIlmBreakdown(cluster, indices, diskOverheadFactor, growthExtraGb);
 
   const base: Omit<
     CalculationResult,
@@ -266,12 +299,16 @@ export function calculateCluster(
     totalPrimaryShards,
     totalShards,
     totalDataWithReplicasGb,
+    growthProjectedExtraGb: growthExtraGb,
+    totalDataWithGrowthGb,
     totalWriteRate,
     totalReadRate,
     diskUsagePercent,
     shardsPerNode,
     estimatedDiskUsagePercent,
     diskOverheadFactor,
+    roughSnapshotRepoGb,
+    roughSnapshotDurationHours,
     heapBreakdown,
     ilmBreakdown,
     indexBreakdowns,
@@ -279,7 +316,7 @@ export function calculateCluster(
     dataNodes,
   };
 
-  const warnings = collectWarnings(cluster, indices, base);
+  const warnings = collectWarnings(cluster, indices, base, limits);
   const { recommendations, scalingAssessment } = buildRecommendations(
     cluster,
     indices,

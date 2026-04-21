@@ -5,6 +5,8 @@ import {
   catRowsToIndexConfigs,
   fetchCatIndices,
   fetchClusterHints,
+  fetchIlmPoliciesJson,
+  fetchIndexTemplatesJson,
   normalizeElasticsearchUrl,
   probeElasticsearchAccess,
   shouldUseElasticsearchProxy,
@@ -13,6 +15,8 @@ import {
   type ProbeResult,
 } from "../utils/elasticsearchClient";
 import { BaklavaButton, BaklavaInput } from "../baklava/components";
+import { BaklavaInputWithInfoHint } from "./BaklavaInputWithInfoHint";
+import { useI18n } from "../i18n/I18nContext";
 
 type AuthMode = "none" | "basic" | "apiKey";
 
@@ -21,10 +25,16 @@ export type EsConnection = {
   headers: Record<string, string>;
 };
 
+export type EsClusterInsightsCachePayload = {
+  ilmPoliciesJson?: string;
+  indexTemplatesJson?: string;
+};
+
 type Props = {
   setCluster: React.Dispatch<React.SetStateAction<ClusterConfig>>;
   setIndices: React.Dispatch<React.SetStateAction<IndexConfig[]>>;
   onConnectionChange?: (conn: EsConnection | null) => void;
+  onClusterInsightsData?: (data: EsClusterInsightsCachePayload) => void;
 };
 
 function readValue(e: Event): string {
@@ -71,7 +81,13 @@ function probePresentation(probe: ProbeResult | null): {
   };
 }
 
-export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }: Props) {
+export function EsConnectionPanel({
+  setCluster,
+  setIndices,
+  onConnectionChange,
+  onClusterInsightsData,
+}: Props) {
+  const { t } = useI18n();
   const [baseUrl, setBaseUrl] = useState("");
   const [authMode, setAuthMode] = useState<AuthMode>("none");
   const [username, setUsername] = useState("");
@@ -85,6 +101,10 @@ export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }
   const [hintNotes, setHintNotes] = useState<string[] | null>(null);
 
   const [includeSystemIndices, setIncludeSystemIndices] = useState(false);
+  const [pullClusterHints, setPullClusterHints] = useState(true);
+  const [indicesPull, setIndicesPull] = useState<"none" | "replace" | "merge">("none");
+  const [pullIlmPolicies, setPullIlmPolicies] = useState(false);
+  const [pullIndexTemplates, setPullIndexTemplates] = useState(false);
 
   const buildAuth = useCallback((): EsAuth => {
     if (authMode === "basic") {
@@ -147,6 +167,10 @@ export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }
     setHintNotes(null);
     setPassword("");
     setApiKey("");
+    setPullClusterHints(true);
+    setIndicesPull("none");
+    setPullIlmPolicies(false);
+    setPullIndexTemplates(false);
     onConnectionChange?.(null);
   };
 
@@ -155,61 +179,98 @@ export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }
     return buildEsHeaders(buildAuth());
   };
 
-  const handleFillIndices = async (mode: "replace" | "merge") => {
-    if (!normalizedUrl || !connected) return;
+  const runClusterHints = async (): Promise<boolean> => {
+    if (!normalizedUrl) return false;
     const headers = headersForRequests();
-    if (!headers) return;
-
-    if (mode === "replace") {
-      const ok = window.confirm(
-        "Replace all calculator indices with open indices from the cluster? (Respects the system-indices checkbox below.)"
-      );
-      if (!ok) return;
-    }
-
-    setBusy("indices");
+    if (!headers) return false;
     setConnectError(null);
-    try {
-      const r = await fetchCatIndices(normalizedUrl, headers);
-      if (!r.ok) {
-        setConnectError(r.message);
-        return;
-      }
-      const imported = catRowsToIndexConfigs(r.rows, includeSystemIndices);
-      if (imported.length === 0) {
-        setConnectError("No open indices matched (try including system indices).");
-        return;
-      }
-      if (mode === "replace") {
-        setIndices(imported);
-      } else {
-        setIndices((prev) => {
-          const names = new Set(prev.map((i) => i.name));
-          const toAdd = imported.filter((i) => !names.has(i.name));
-          return [...prev, ...toAdd];
-        });
-      }
-    } finally {
-      setBusy(null);
+    const r = await fetchClusterHints(normalizedUrl, headers);
+    if (!r.ok) {
+      setConnectError(r.message);
+      return false;
     }
+    setCluster((c) => applyClusterPatch(c, r.patch));
+    setHintNotes(r.notes);
+    return true;
   };
 
-  const handleClusterHints = async () => {
-    if (!normalizedUrl || !connected) return;
+  const runFillIndices = async (mode: "replace" | "merge"): Promise<boolean> => {
+    if (!normalizedUrl) return false;
     const headers = headersForRequests();
-    if (!headers) return;
-
-    setBusy("cluster");
+    if (!headers) return false;
     setConnectError(null);
-    setHintNotes(null);
+    const r = await fetchCatIndices(normalizedUrl, headers);
+    if (!r.ok) {
+      setConnectError(r.message);
+      return false;
+    }
+    const imported = catRowsToIndexConfigs(r.rows, includeSystemIndices);
+    if (imported.length === 0) {
+      setConnectError("No open indices matched (try including system indices).");
+      return false;
+    }
+    if (mode === "replace") {
+      setIndices(imported);
+    } else {
+      setIndices((prev) => {
+        const names = new Set(prev.map((i) => i.name));
+        const toAdd = imported.filter((i) => !names.has(i.name));
+        return [...prev, ...toAdd];
+      });
+    }
+    return true;
+  };
+
+  const handleFetchSelected = async () => {
+    if (!normalizedUrl || !connected) return;
+    if (
+      !pullClusterHints &&
+      indicesPull === "none" &&
+      !pullIlmPolicies &&
+      !pullIndexTemplates
+    ) {
+      setConnectError(t("esSelectFetchTarget"));
+      return;
+    }
+    if (indicesPull === "replace") {
+      const ok = window.confirm(t("esConfirmReplace"));
+      if (!ok) return;
+    }
+    setConnectError(null);
+    const hdr = headersForRequests();
+    if (!hdr) {
+      setConnectError("Missing headers.");
+      return;
+    }
+    setBusy("fetch");
     try {
-      const r = await fetchClusterHints(normalizedUrl, headers);
-      if (!r.ok) {
-        setConnectError(r.message);
-        return;
+      if (pullClusterHints) {
+        const ok = await runClusterHints();
+        if (!ok) return;
       }
-      setCluster((c) => applyClusterPatch(c, r.patch));
-      setHintNotes(r.notes);
+      if (indicesPull === "replace") {
+        const ok = await runFillIndices("replace");
+        if (!ok) return;
+      } else if (indicesPull === "merge") {
+        const ok = await runFillIndices("merge");
+        if (!ok) return;
+      }
+      if (pullIlmPolicies) {
+        const r = await fetchIlmPoliciesJson(normalizedUrl, hdr);
+        if (!r.ok) {
+          setConnectError(r.message);
+          return;
+        }
+        onClusterInsightsData?.({ ilmPoliciesJson: r.raw });
+      }
+      if (pullIndexTemplates) {
+        const r = await fetchIndexTemplatesJson(normalizedUrl, hdr);
+        if (!r.ok) {
+          setConnectError(r.message);
+          return;
+        }
+        onClusterInsightsData?.({ indexTemplatesJson: r.raw });
+      }
     } finally {
       setBusy(null);
     }
@@ -277,10 +338,10 @@ export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }
         )}
 
         {authMode === "apiKey" && (
-          <BaklavaInput
+          <BaklavaInputWithInfoHint
             label="API key"
             value={apiKey}
-            helpText="Paste the Base64 key from Kibana, or id:api_key (colon form is Base64-encoded for the ApiKey header)"
+            infoHint={t("esApiKeyHoverHint")}
             onBlInput={(e) => {
               setApiKey(readValue(e));
               setConnected(false);
@@ -336,7 +397,7 @@ export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }
       {connected && (
         <div className="es-connected-block">
           <p className="es-connected-line">
-            <span className="es-badge es-badge-ok">Connected</span>
+            <span className="es-badge es-badge-ok">{t("esConnected")}</span>
           </p>
           <label className="es-checkbox-row">
             <input
@@ -344,45 +405,78 @@ export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }
               checked={includeSystemIndices}
               onChange={(e) => setIncludeSystemIndices(e.target.checked)}
             />
-            <span>Include system indices (names starting with &ldquo;.&rdquo;)</span>
+            <span>{t("esIncludeSystemIndices")}</span>
           </label>
-          <div className="actions-row">
-            <BaklavaButton
-              variant="secondary"
-              size="small"
-              disabled={busy !== null}
-              onBlClick={() => {
-                void handleFillIndices("replace");
-              }}
-            >
-              {busy === "indices" ? "Loading…" : "Replace indices from cluster"}
-            </BaklavaButton>
-            <BaklavaButton
-              variant="secondary"
-              size="small"
-              disabled={busy !== null}
-              onBlClick={() => {
-                void handleFillIndices("merge");
-              }}
-            >
-              {busy === "indices" ? "Loading…" : "Add missing indices from cluster"}
-            </BaklavaButton>
-            <BaklavaButton
-              variant="secondary"
-              size="small"
-              disabled={busy !== null}
-              onBlClick={() => {
-                void handleClusterHints();
-              }}
-            >
-              {busy === "cluster" ? "Loading…" : "Apply cluster hints from nodes"}
-            </BaklavaButton>
+
+          <div className="es-fetch-options">
+            <label className="es-checkbox-row">
+              <input
+                type="checkbox"
+                checked={pullClusterHints}
+                onChange={(e) => setPullClusterHints(e.target.checked)}
+              />
+              <span>{t("esOptClusterHints")}</span>
+            </label>
+            <label className="es-checkbox-row">
+              <input
+                type="checkbox"
+                checked={pullIlmPolicies}
+                onChange={(e) => setPullIlmPolicies(e.target.checked)}
+              />
+              <span>{t("esOptFetchIlm")}</span>
+            </label>
+            <label className="es-checkbox-row">
+              <input
+                type="checkbox"
+                checked={pullIndexTemplates}
+                onChange={(e) => setPullIndexTemplates(e.target.checked)}
+              />
+              <span>{t("esOptFetchIndexTpl")}</span>
+            </label>
+            <div className="es-radio-group" role="group" aria-label={t("esOptIndicesLabel")}>
+              <span className="index-shard-label es-radio-group-label">{t("esOptIndicesLabel")}</span>
+              <label className="es-radio-row">
+                <input
+                  type="radio"
+                  name="es-indices-pull"
+                  checked={indicesPull === "none"}
+                  onChange={() => setIndicesPull("none")}
+                />
+                <span>{t("esOptIdxNone")}</span>
+              </label>
+              <label className="es-radio-row">
+                <input
+                  type="radio"
+                  name="es-indices-pull"
+                  checked={indicesPull === "replace"}
+                  onChange={() => setIndicesPull("replace")}
+                />
+                <span>{t("esOptIdxReplace")}</span>
+              </label>
+              <label className="es-radio-row">
+                <input
+                  type="radio"
+                  name="es-indices-pull"
+                  checked={indicesPull === "merge"}
+                  onChange={() => setIndicesPull("merge")}
+                />
+                <span>{t("esOptIdxMerge")}</span>
+              </label>
+            </div>
+            <div className="actions-row es-fetch-selected-row">
+              <BaklavaButton
+                variant="primary"
+                size="small"
+                disabled={busy !== null}
+                onBlClick={() => {
+                  void handleFetchSelected();
+                }}
+              >
+                {busy === "fetch" ? t("busy") : t("esFetchSelected")}
+              </BaklavaButton>
+            </div>
           </div>
-          <p className="es-help-muted es-hint-cluster">
-            &ldquo;Cluster hints&rdquo; updates node counts, average RAM per data node, and total
-            disk from <code>_cluster/stats</code> and <code>_cat/nodes</code>; review values if
-            nodes share roles.
-          </p>
+          <p className="es-help-muted es-hint-cluster">{t("esClusterHintsHelp")}</p>
         </div>
       )}
 

@@ -1,3 +1,5 @@
+export type WorkloadProfile = "balanced" | "search_heavy" | "ingest_heavy";
+
 export interface ClusterConfig {
   masterNodeCount: number;
   dataNodeCount: number;
@@ -9,7 +11,24 @@ export interface ClusterConfig {
   coldNodeCount?: number;
   warmDiskPerNodeGb?: number;
   coldDiskPerNodeGb?: number;
+  workloadProfile?: WorkloadProfile;
+  growthGbPerDay?: number;
+  growthProjectionDays?: number;
+  costUsdPerGbRamMonth?: number;
+  costUsdPerGbDiskMonth?: number;
+  costUsdPerDataNodeMonth?: number;
 }
+
+export type ClusterLimitsHint = {
+  maxShardsPerNode?: number;
+  floodStageDiskPercent?: number;
+};
+
+export type UiLocale = "en" | "tr";
+
+export type UiTheme = "light" | "dark";
+
+export type AppMainView = "designer" | "compare" | "cost";
 
 export interface IndexConfig {
   id: string;
@@ -33,6 +52,7 @@ export interface WarningItem {
   level: WarningLevel;
   message: string;
   context?: string;
+  indexId?: string;
 }
 
 export type RecommendationKind = "underscale" | "overscale" | "shard" | "node";
@@ -42,7 +62,13 @@ export interface RecommendationItem {
   kind: RecommendationKind;
   title: string;
   description: string;
+  indexId?: string;
 }
+
+export type IndexInsightBuckets = {
+  warningsByIndexId: ReadonlyMap<string, WarningItem[]>;
+  recommendationsByIndexId: ReadonlyMap<string, RecommendationItem[]>;
+};
 
 export interface IndexBreakdown {
   indexId: string;
@@ -146,12 +172,16 @@ export interface CalculationResult {
   totalPrimaryShards: number;
   totalShards: number;
   totalDataWithReplicasGb: number;
+  growthProjectedExtraGb: number;
+  totalDataWithGrowthGb: number;
   totalWriteRate: number;
   totalReadRate: number;
   diskUsagePercent: number;
   shardsPerNode: number;
   estimatedDiskUsagePercent: number;
   diskOverheadFactor: number;
+  roughSnapshotRepoGb: number;
+  roughSnapshotDurationHours: number;
   heapBreakdown: HeapBreakdown;
   ilmBreakdown: IlmBreakdown;
   indexBreakdowns: IndexBreakdown[];
@@ -168,4 +198,6 @@ export const SNAPSHOTS_KEY = "elastic-calculator-snapshots-v1";
 export interface PersistedState {
   cluster: ClusterConfig;
   indices: IndexConfig[];
+  locale?: UiLocale;
+  theme?: UiTheme;
 }

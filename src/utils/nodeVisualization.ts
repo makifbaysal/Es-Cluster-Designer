@@ -238,6 +238,6 @@ export function clusterVisualSummary(result: CalculationResult): {
   return {
     totalPrimaryShards,
     totalReplicaCopies,
-    totalDataGb: result.totalDataWithReplicasGb,
+    totalDataGb: result.totalDataWithGrowthGb,
   };
 }

@@ -48,6 +48,10 @@ export function buildNodeCsv(result: CalculationResult): string {
   lines.push(row(["maxShardsPerNodeGuideline", result.maxShardsPerNode]));
   lines.push(row(["totalShards", result.totalShards]));
   lines.push(row(["totalDataWithReplicasGb", result.totalDataWithReplicasGb]));
+  lines.push(row(["growthProjectedExtraGb", result.growthProjectedExtraGb]));
+  lines.push(row(["totalDataWithGrowthGb", result.totalDataWithGrowthGb]));
+  lines.push(row(["roughSnapshotRepoGb", result.roughSnapshotRepoGb]));
+  lines.push(row(["roughSnapshotDurationHours", result.roughSnapshotDurationHours]));
   lines.push(row(["diskUsagePercent", result.diskUsagePercent]));
   lines.push(row(["scalingAssessment", result.scalingAssessment]));
   return lines.join("\n");

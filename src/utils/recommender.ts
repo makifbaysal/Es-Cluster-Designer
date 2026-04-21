@@ -76,11 +76,12 @@ export function buildRecommendations(
         kind: "shard",
         title: `Shard count hint for "${ib.indexName}"`,
         description: `For ~${TARGET_SHARD_MIN}-${TARGET_SHARD_MAX} GB shards, try primary shards around ${idealPrimary}-${alt} (current ${ib.primaryShards}).`,
+        indexId: ib.indexId,
       });
     }
   }
 
-  const dataWithOverhead = result.totalDataWithReplicasGb * OVERHEAD;
+  const dataWithOverhead = result.totalDataWithGrowthGb * OVERHEAD;
   const perNodeDisk =
     cluster.dataNodeCount > 0
       ? cluster.totalDiskSize / cluster.dataNodeCount

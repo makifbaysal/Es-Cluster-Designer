@@ -7,6 +7,12 @@ const defaultCluster: ClusterConfig = {
   memoryPerNode: 32,
   cpuPerNode: 8,
   totalDiskSize: 3000,
+  workloadProfile: "balanced",
+  growthGbPerDay: 0,
+  growthProjectionDays: 0,
+  costUsdPerGbRamMonth: 0,
+  costUsdPerGbDiskMonth: 0,
+  costUsdPerDataNodeMonth: 0,
 };
 
 export function generateIndexId(): string {
@@ -39,15 +45,20 @@ export function loadPersistedState(): PersistedState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return { cluster: defaultCluster, indices: defaultIndices() };
+      return { cluster: defaultCluster, indices: defaultIndices(), locale: "en", theme: "light" };
     }
     const parsed = JSON.parse(raw) as PersistedState;
     if (!parsed.cluster || !Array.isArray(parsed.indices)) {
-      return { cluster: defaultCluster, indices: defaultIndices() };
+      return { cluster: defaultCluster, indices: defaultIndices(), locale: "en", theme: "light" };
     }
-    return parsed;
+    return {
+      cluster: { ...defaultCluster, ...parsed.cluster },
+      indices: parsed.indices,
+      locale: parsed.locale === "tr" ? "tr" : "en",
+      theme: parsed.theme === "dark" ? "dark" : "light",
+    };
   } catch {
-    return { cluster: defaultCluster, indices: defaultIndices() };
+    return { cluster: defaultCluster, indices: defaultIndices(), locale: "en", theme: "light" };
   }
 }
 

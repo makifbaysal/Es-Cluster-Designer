@@ -10,6 +10,12 @@ const CLUSTER_HEADER = [
   "memoryPerNode",
   "cpuPerNode",
   "totalDiskSize",
+  "workloadProfile",
+  "growthGbPerDay",
+  "growthProjectionDays",
+  "costUsdPerGbRamMonth",
+  "costUsdPerGbDiskMonth",
+  "costUsdPerDataNodeMonth",
 ] as const;
 
 const INDEX_HEADER = [
@@ -89,6 +95,12 @@ export function buildStateCsv(cluster: ClusterConfig, indices: IndexConfig[]): s
       cluster.memoryPerNode,
       cluster.cpuPerNode,
       cluster.totalDiskSize,
+      cluster.workloadProfile ?? "balanced",
+      cluster.growthGbPerDay ?? 0,
+      cluster.growthProjectionDays ?? 0,
+      cluster.costUsdPerGbRamMonth ?? 0,
+      cluster.costUsdPerGbDiskMonth ?? 0,
+      cluster.costUsdPerDataNodeMonth ?? 0,
     ])
   );
   lines.push("");
@@ -143,15 +155,19 @@ export function parseStateCsv(text: string): ParseStateCsvResult {
   }
 
   const clusterHeader = parseCsvLine(lines[1]);
-  if (!headersMatch(clusterHeader, CLUSTER_HEADER)) {
+  const legacyHeader = CLUSTER_HEADER.slice(0, 5);
+  const headerOk =
+    headersMatch(clusterHeader, CLUSTER_HEADER) ||
+    headersMatch(clusterHeader, legacyHeader);
+  if (!headerOk) {
     return {
       ok: false,
-      message: `Invalid cluster header. Expected: ${CLUSTER_HEADER.join(",")}`,
+      message: `Invalid cluster header. Expected at least: ${legacyHeader.join(",")}`,
     };
   }
 
   const clusterCells = parseCsvLine(lines[2]);
-  if (clusterCells.length < CLUSTER_HEADER.length) {
+  if (clusterCells.length < legacyHeader.length) {
     return { ok: false, message: "Cluster row has too few columns." };
   }
 
@@ -161,6 +177,19 @@ export function parseStateCsv(text: string): ParseStateCsvResult {
     memoryPerNode: Math.max(0, parseNum(clusterCells[2], 0)),
     cpuPerNode: Math.max(0, parseNum(clusterCells[3], 0)),
     totalDiskSize: Math.max(0, parseNum(clusterCells[4], 0)),
+    workloadProfile:
+      clusterCells[5] === "search_heavy" || clusterCells[5] === "ingest_heavy"
+        ? (clusterCells[5] as ClusterConfig["workloadProfile"])
+        : "balanced",
+    growthGbPerDay: clusterCells[6] !== undefined ? Math.max(0, parseNum(clusterCells[6], 0)) : 0,
+    growthProjectionDays:
+      clusterCells[7] !== undefined ? Math.max(0, parseIntSafe(clusterCells[7], 0, 0)) : 0,
+    costUsdPerGbRamMonth:
+      clusterCells[8] !== undefined ? Math.max(0, parseNum(clusterCells[8], 0)) : 0,
+    costUsdPerGbDiskMonth:
+      clusterCells[9] !== undefined ? Math.max(0, parseNum(clusterCells[9], 0)) : 0,
+    costUsdPerDataNodeMonth:
+      clusterCells[10] !== undefined ? Math.max(0, parseNum(clusterCells[10], 0)) : 0,
   };
 
   if (lines.length < 4) {

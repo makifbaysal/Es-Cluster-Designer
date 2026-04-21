@@ -1,125 +1,174 @@
-import type { CalculationResult, RecommendationItem } from "../types";
+import type {
+  CalculationResult,
+  RecommendationItem,
+  ScalingAssessment,
+} from "../types";
 import { BaklavaAlert, BaklavaTag } from "../baklava/components";
+import { useI18n } from "../i18n/I18nContext";
+import { recommendationKindLabel } from "../utils/recommendationKindLabel";
 
 type Props = {
   result: CalculationResult;
   items: RecommendationItem[];
+  variant?: "standalone" | "summary";
 };
 
-function kindLabel(kind: RecommendationItem["kind"]): string {
-  switch (kind) {
-    case "underscale": return "Underscale";
-    case "overscale": return "Overscale";
-    case "shard": return "Shard";
-    case "node": return "Nodes";
-    default: return kind;
+function summaryAssessmentClass(a: ScalingAssessment): string {
+  if (a === "underscale") {
+    return "summary-assessment summary-assessment--underscale";
   }
+  if (a === "overscale") {
+    return "summary-assessment summary-assessment--overscale";
+  }
+  return "summary-assessment summary-assessment--optimal";
 }
 
-function HeapBar({
-  label,
-  gb,
-  total,
-  color,
-}: {
-  label: string;
-  gb: number;
-  total: number;
-  color?: string;
-}) {
-  const pct = total > 0 ? Math.min(100, (gb / total) * 100) : 0;
-  return (
-    <div className="heap-bar-row">
-      <span className="heap-bar-label">{label}</span>
-      <div className="heap-bar-track">
-        <div
-          className="heap-bar-fill"
-          style={{ width: `${pct}%`, ...(color ? { background: color } : {}) }}
-        />
-      </div>
-      <span className="heap-bar-value">{gb.toFixed(1)} GB</span>
+function recommendationAlertCaption(
+  r: RecommendationItem,
+  scaling: ScalingAssessment,
+  omitKindWhenMatchesAssessment: boolean
+): string {
+  if (
+    omitKindWhenMatchesAssessment &&
+    (r.kind === "overscale" || r.kind === "underscale") &&
+    r.kind === scaling
+  ) {
+    return r.title;
+  }
+  return `${recommendationKindLabel(r.kind)} - ${r.title}`;
+}
+
+export function RecommendationPanel({ result, items, variant = "standalone" }: Props) {
+  const { t } = useI18n();
+  const { diskOverheadFactor } = result;
+  const clusterItems = items.filter((r) => !r.indexId);
+  const indexOnlyClusterEmpty =
+    clusterItems.length === 0 && items.some((r) => Boolean(r.indexId));
+
+  const metrics = (
+    <div className="metrics-row metrics-row--rec-aside">
+      <BaklavaTag size="medium">
+        {t("recAssessment")}: {result.scalingAssessment}
+      </BaklavaTag>
+      <BaklavaTag size="medium">
+        {t("recHeapPerNode")}: {result.heapPerNodeGb.toFixed(2)} GB
+      </BaklavaTag>
+      <BaklavaTag size="medium">
+        {t("recGuidelineShards")}: {result.maxShardsPerNode.toFixed(0)}
+      </BaklavaTag>
+      {diskOverheadFactor > 1.15 && (
+        <BaklavaTag size="medium">
+          {t("recDiskOverhead")}: {diskOverheadFactor}× {t("recWriteDominant")}
+        </BaklavaTag>
+      )}
+      {result.growthProjectedExtraGb > 0 && (
+        <BaklavaTag size="medium">
+          {t("recGrowth")} +{result.growthProjectedExtraGb.toFixed(1)} GB → {t("recTotal")}{" "}
+          {result.totalDataWithGrowthGb.toFixed(1)} GB
+        </BaklavaTag>
+      )}
+      <BaklavaTag size="medium">
+        {t("recSnapshot")} ~{result.roughSnapshotRepoGb.toFixed(0)} GB / ~
+        {result.roughSnapshotDurationHours.toFixed(1)} h
+      </BaklavaTag>
     </div>
   );
-}
 
-export function RecommendationPanel({ result, items }: Props) {
-  const { heapBreakdown, diskOverheadFactor } = result;
-
-  return (
-    <section className="panel">
-      <h2 className="panel-title">Recommendations</h2>
-      <div className="metrics-row">
-        <BaklavaTag size="large">Assessment: {result.scalingAssessment}</BaklavaTag>
-        <BaklavaTag size="large">Heap / node: {result.heapPerNodeGb.toFixed(2)} GB</BaklavaTag>
-        <BaklavaTag size="large">Guideline shards / node: {result.maxShardsPerNode.toFixed(0)}</BaklavaTag>
-        {diskOverheadFactor > 1.15 && (
-          <BaklavaTag size="large">Disk overhead: {diskOverheadFactor}× (write-dominant)</BaklavaTag>
-        )}
+  const summaryMetrics = (
+    <div className="summary-reco-metrics">
+      <div className={summaryAssessmentClass(result.scalingAssessment)}>
+        <span className="summary-assessment__label">{t("recAssessment")}</span>
+        <span className="summary-assessment__value">{result.scalingAssessment}</span>
       </div>
-
-      <div className="heap-breakdown">
-        <p className="heap-breakdown-title">RAM breakdown (per node)</p>
-        <HeapBar
-          label="JVM Heap"
-          gb={heapBreakdown.totalHeapGb}
-          total={heapBreakdown.totalRamGb}
-          color="#e95400"
-        />
-        <HeapBar
-          label="OS page cache"
-          gb={heapBreakdown.osPageCacheGb}
-          total={heapBreakdown.totalRamGb}
-          color="#0891b2"
-        />
-        <div className="heap-breakdown-divider" />
-        <p className="heap-breakdown-title" style={{ marginTop: 8 }}>JVM Heap detail</p>
-        <HeapBar label="Field data cache" gb={heapBreakdown.fieldDataCacheGb} total={heapBreakdown.totalHeapGb} />
-        <HeapBar label="Query buffer" gb={heapBreakdown.queryBufferGb} total={heapBreakdown.totalHeapGb} />
-        <HeapBar label="Indexing buffer" gb={heapBreakdown.indexingBufferGb} total={heapBreakdown.totalHeapGb} />
-        <HeapBar label="Available" gb={heapBreakdown.availableGb} total={heapBreakdown.totalHeapGb} />
-        {heapBreakdown.hotDataPerNodeGb > 0 && (
-          <div className="cache-ratio-row">
-            <span className="cache-ratio-label">Page cache covers hot data:</span>
-            <span
-              className={`cache-ratio-value${
-                heapBreakdown.cacheRatio >= 1
-                  ? " cache-ratio--ok"
-                  : heapBreakdown.cacheRatio >= 0.5
-                    ? " cache-ratio--warn"
-                    : " cache-ratio--crit"
-              }`}
-            >
-              {Math.min(100, heapBreakdown.cacheRatio * 100).toFixed(0)}%
-              {heapBreakdown.cacheRatio >= 1 ? " ✓ fully cached" : ""}
-            </span>
+      <dl className="summary-metric-grid">
+        <div className="summary-metric-row">
+          <dt>{t("recHeapPerNode")}</dt>
+          <dd>{result.heapPerNodeGb.toFixed(2)} GB</dd>
+        </div>
+        <div className="summary-metric-row">
+          <dt>{t("recGuidelineShards")}</dt>
+          <dd>{result.maxShardsPerNode.toFixed(0)}</dd>
+        </div>
+        {diskOverheadFactor > 1.15 && (
+          <div className="summary-metric-row">
+            <dt>{t("recDiskOverhead")}</dt>
+            <dd>
+              {diskOverheadFactor}× {t("recWriteDominant")}
+            </dd>
           </div>
         )}
-      </div>
-
-      {items.length === 0 ? (
-        <BaklavaAlert
-          variant="success"
-          caption="No major issues"
-          description="Configuration looks balanced against current heuristics."
-        />
-      ) : (
-        <div className="alert-stack">
-          {items.map((r) => (
-            <BaklavaAlert
-              key={r.id}
-              variant={
-                r.kind === "underscale"
-                  ? "danger"
-                  : r.kind === "overscale"
-                    ? "info"
-                    : "warning"
-              }
-              caption={`${kindLabel(r.kind)} - ${r.title}`}
-              description={r.description}
-            />
-          ))}
+        {result.growthProjectedExtraGb > 0 && (
+          <div className="summary-metric-row summary-metric-row--wrap">
+            <dt>{t("recGrowth")}</dt>
+            <dd>
+              +{result.growthProjectedExtraGb.toFixed(1)} GB → {t("recTotal")}{" "}
+              {result.totalDataWithGrowthGb.toFixed(1)} GB
+            </dd>
+          </div>
+        )}
+        <div className="summary-metric-row summary-metric-row--wrap">
+          <dt>{t("recSnapshot")}</dt>
+          <dd>
+            ~{result.roughSnapshotRepoGb.toFixed(0)} GB / ~{result.roughSnapshotDurationHours.toFixed(1)} h
+          </dd>
         </div>
-      )}
+      </dl>
+    </div>
+  );
+
+  const alertsContent =
+    clusterItems.length === 0 && !indexOnlyClusterEmpty ? (
+      <BaklavaAlert
+        variant="success"
+        caption={t("recNoMajorCaption")}
+        description={t("recNoMajorDesc")}
+      />
+    ) : indexOnlyClusterEmpty ? (
+      <BaklavaAlert
+        variant="info"
+        caption={t("recIndexHintsOnlyCaption")}
+        description={t("recIndexHintsOnlyDesc")}
+      />
+    ) : (
+      <div className="alert-stack">
+        {clusterItems.map((r) => (
+          <BaklavaAlert
+            key={r.id}
+            variant={
+              r.kind === "underscale"
+                ? "danger"
+                : r.kind === "overscale"
+                  ? "info"
+                  : "warning"
+            }
+            caption={recommendationAlertCaption(
+              r,
+              result.scalingAssessment,
+              variant === "summary"
+            )}
+            description={r.description}
+          />
+        ))}
+      </div>
+    );
+
+  if (variant === "summary") {
+    return (
+      <div className="designer-summary__block designer-summary__block--reco">
+        <h3 className="designer-summary__block-title">{t("recPanelTitle")}</h3>
+        {summaryMetrics}
+        <div className="heap-breakdown heap-breakdown--aside heap-breakdown--reco-callout">
+          {alertsContent}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <section className="panel results-aside-panel">
+      <h2 className="panel-title">{t("recPanelTitle")}</h2>
+      {metrics}
+      <div className="heap-breakdown heap-breakdown--aside">{alertsContent}</div>
     </section>
   );
 }

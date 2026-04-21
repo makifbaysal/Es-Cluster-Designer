@@ -1,5 +1,5 @@
 import { getElasticDevProxyUrl } from "../elasticDevProxy";
-import type { ClusterConfig, IndexConfig } from "../types";
+import type { ClusterConfig, ClusterLimitsHint, IndexConfig } from "../types";
 import { generateIndexId } from "./storage";
 
 export type EsAuth =
@@ -379,5 +379,260 @@ export async function fetchIndexDocCount(
     return { ok: true, count };
   } catch {
     return { ok: false, message: "Could not parse doc count." };
+  }
+}
+
+export async function fetchClusterSettingsFlat(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; raw: string } | { ok: false; message: string }> {
+  const r = await esFetchText(
+    baseUrl,
+    "/_cluster/settings?flat_settings=true&include_defaults=false",
+    headers
+  );
+  if (!r.ok) return { ok: false, message: r.message };
+  return { ok: true, raw: r.data };
+}
+
+export function parseClusterLimitsFromSettingsJson(text: string): ClusterLimitsHint {
+  try {
+    const o = JSON.parse(text) as {
+      persistent?: Record<string, unknown>;
+      transient?: Record<string, unknown>;
+    };
+    const flat: Record<string, unknown> = {
+      ...(o.transient ?? {}),
+      ...(o.persistent ?? {}),
+    };
+    let maxShardsPerNode: number | undefined;
+    const ms = flat["cluster.max_shards_per_node"];
+    if (ms !== undefined) {
+      const n = parseInt(String(ms), 10);
+      if (Number.isFinite(n) && n > 0) maxShardsPerNode = n;
+    }
+    let floodStageDiskPercent: number | undefined;
+    const fk =
+      flat["cluster.routing.allocation.disk.watermark.flood_stage"] ??
+      flat["cluster.routing.allocation.disk.watermark.flood-stage"];
+    if (fk !== undefined) {
+      const m = String(fk).match(/(\d+(?:\.\d+)?)\s*%/);
+      if (m) floodStageDiskPercent = parseFloat(m[1]);
+    }
+    return { maxShardsPerNode, floodStageDiskPercent };
+  } catch {
+    return {};
+  }
+}
+
+export type CatAllocationRow = Record<string, string>;
+
+export async function fetchCatAllocation(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; rows: CatAllocationRow[] } | { ok: false; message: string }> {
+  const r = await esFetchText(
+    baseUrl,
+    "/_cat/allocation?format=json&bytes=b&h=node,shards,disk.indices,disk.used,disk.avail,disk.total",
+    headers
+  );
+  if (!r.ok) return { ok: false, message: r.message };
+  try {
+    return { ok: true, rows: parseCatJsonArray(r.data) as CatAllocationRow[] };
+  } catch {
+    return { ok: false, message: "Could not parse allocation." };
+  }
+}
+
+export type CatShardRow = Record<string, string>;
+
+export async function fetchCatShards(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; rows: CatShardRow[] } | { ok: false; message: string }> {
+  const r = await esFetchText(
+    baseUrl,
+    "/_cat/shards?format=json&bytes=b&h=index,shard,prirep,state,docs,store,node",
+    headers
+  );
+  if (!r.ok) return { ok: false, message: r.message };
+  try {
+    return { ok: true, rows: parseCatJsonArray(r.data) as CatShardRow[] };
+  } catch {
+    return { ok: false, message: "Could not parse shards." };
+  }
+}
+
+export function aggregateShardStoreByNode(rows: CatShardRow[]): { node: string; storeBytes: number; shardCount: number }[] {
+  const map = new Map<string, { storeBytes: number; shardCount: number }>();
+  for (const row of rows) {
+    const node = (row.node ?? "").trim();
+    if (!node || node === "UNASSIGNED") continue;
+    const st = parseInt(row.store ?? "0", 10) || 0;
+    const cur = map.get(node) ?? { storeBytes: 0, shardCount: 0 };
+    cur.storeBytes += st;
+    cur.shardCount += 1;
+    map.set(node, cur);
+  }
+  return [...map.entries()]
+    .map(([node, v]) => ({ node, ...v }))
+    .sort((a, b) => a.node.localeCompare(b.node));
+}
+
+export async function fetchIlmPoliciesJson(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; raw: string } | { ok: false; message: string }> {
+  const r = await esFetchText(baseUrl, "/_ilm/policy", headers);
+  if (!r.ok) return { ok: false, message: r.message };
+  return { ok: true, raw: r.data };
+}
+
+function parseElasticDurationToDays(s: string): number {
+  const t = s.trim();
+  const m = t.match(/^(\d+(?:\.\d+)?)(d|h|ms|s|m|micros)?$/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  const u = (m[2] ?? "d").toLowerCase();
+  if (u === "d") return n;
+  if (u === "h") return n / 24;
+  if (u === "m" && t.endsWith("m") && !t.endsWith("ms")) return n / (24 * 60);
+  if (u === "s") return n / 86400;
+  if (u === "ms") return n / 86400000;
+  if (u === "micros") return n / 86400000000000;
+  return n;
+}
+
+export function listIlmPolicyNamesFromRaw(raw: string): string[] {
+  if (!raw.trim()) return [];
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    return Object.keys(o);
+  } catch {
+    return [];
+  }
+}
+
+export function suggestedRetentionDaysFromIlmPolicy(policyBody: unknown): number | null {
+  if (!policyBody || typeof policyBody !== "object") return null;
+  const phases = (policyBody as { policy?: { phases?: Record<string, unknown> } }).policy?.phases;
+  if (!phases || typeof phases !== "object") return null;
+  let sum = 0;
+  for (const ph of Object.values(phases)) {
+    if (!ph || typeof ph !== "object") continue;
+    const minAge = (ph as { min_age?: string }).min_age;
+    if (typeof minAge === "string") sum += parseElasticDurationToDays(minAge);
+  }
+  return sum > 0 ? Math.ceil(sum) : null;
+}
+
+export async function fetchIndexTemplatesJson(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; raw: string } | { ok: false; message: string }> {
+  const r = await esFetchText(baseUrl, "/_index_template", headers);
+  if (!r.ok) return { ok: false, message: r.message };
+  return { ok: true, raw: r.data };
+}
+
+export async function fetchComponentTemplatesJson(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; raw: string } | { ok: false; message: string }> {
+  const r = await esFetchText(baseUrl, "/_component_template", headers);
+  if (!r.ok) return { ok: false, message: r.message };
+  return { ok: true, raw: r.data };
+}
+
+export function extractMappingsJsonFromIndexTemplateResponse(
+  raw: string,
+  templateName: string
+): { ok: true; mappingJson: string } | { ok: false; message: string } {
+  try {
+    const data = JSON.parse(raw) as {
+      index_templates?: { name: string; index_template?: { template?: { mappings?: unknown } } }[];
+    };
+    const list = data.index_templates ?? [];
+    const hit = list.find((x) => x.name === templateName);
+    const mappings = hit?.index_template?.template?.mappings;
+    if (!mappings) return { ok: false, message: "Template or mappings not found." };
+    return { ok: true, mappingJson: JSON.stringify(mappings, null, 2) };
+  } catch {
+    return { ok: false, message: "Could not parse index templates." };
+  }
+}
+
+export function listIndexTemplateNames(raw: string): string[] {
+  try {
+    const data = JSON.parse(raw) as { index_templates?: { name: string }[] };
+    return (data.index_templates ?? []).map((x) => x.name).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function extractMappingsFromComponentTemplateResponse(
+  raw: string,
+  name: string
+): { ok: true; mappingJson: string } | { ok: false; message: string } {
+  try {
+    const data = JSON.parse(raw) as {
+      component_templates?: { name: string; component_template?: { template?: { mappings?: unknown } } }[];
+    };
+    const list = data.component_templates ?? [];
+    const hit = list.find((x) => x.name === name);
+    const mappings = hit?.component_template?.template?.mappings;
+    if (!mappings) return { ok: false, message: "Component or mappings not found." };
+    return { ok: true, mappingJson: JSON.stringify(mappings, null, 2) };
+  } catch {
+    return { ok: false, message: "Could not parse component templates." };
+  }
+}
+
+export function listComponentTemplateNames(raw: string): string[] {
+  try {
+    const data = JSON.parse(raw) as { component_templates?: { name: string }[] };
+    return (data.component_templates ?? []).map((x) => x.name).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchSnapshotRepositoriesJson(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; raw: string } | { ok: false; message: string }> {
+  const r = await esFetchText(baseUrl, "/_snapshot", headers);
+  if (!r.ok) return { ok: false, message: r.message };
+  return { ok: true, raw: r.data };
+}
+
+export function listSnapshotRepositoryNames(raw: string): string[] {
+  try {
+    const o = JSON.parse(raw) as { repositories?: Record<string, unknown> };
+    if (o.repositories && typeof o.repositories === "object") {
+      return Object.keys(o.repositories);
+    }
+    return Object.keys(o as Record<string, unknown>).filter((k) => k !== "repositories");
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchCatSnapshotsForRepo(
+  baseUrl: string,
+  repo: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; rows: CatIndexRow[] } | { ok: false; message: string }> {
+  const r = await esFetchText(
+    baseUrl,
+    `/_cat/snapshots/${encodeURIComponent(repo)}?format=json&h=id,status,start_epoch,end_epoch,total,failed`,
+    headers
+  );
+  if (!r.ok) return { ok: false, message: r.message };
+  try {
+    return { ok: true, rows: parseCatJsonArray(r.data) as CatIndexRow[] };
+  } catch {
+    return { ok: false, message: "Could not parse snapshots." };
   }
 }

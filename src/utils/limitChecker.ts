@@ -1,4 +1,10 @@
-import type { CalculationResult, ClusterConfig, IndexConfig, WarningItem } from "../types";
+import type {
+  CalculationResult,
+  ClusterConfig,
+  ClusterLimitsHint,
+  IndexConfig,
+  WarningItem,
+} from "../types";
 import { heapPerNodeGb, maxShardsForHeap } from "./heap";
 
 const SHARD_SIZE_WARN_LOW = 10;
@@ -22,7 +28,8 @@ export function collectWarnings(
   result: Omit<
     CalculationResult,
     "warnings" | "recommendations" | "scalingAssessment"
-  >
+  >,
+  limits?: ClusterLimitsHint
 ): WarningItem[] {
   const items: WarningItem[] = [];
   const heapGb = heapPerNodeGb(cluster.memoryPerNode);
@@ -60,6 +67,31 @@ export function collectWarnings(
       id: nextId("w"),
       level: "warning",
       message: `Shards per data node (${result.shardsPerNode.toFixed(1)}) exceed heap-based estimate (${maxShards.toFixed(0)}).`,
+    });
+  }
+
+  if (
+    limits?.maxShardsPerNode !== undefined &&
+    Number.isFinite(limits.maxShardsPerNode) &&
+    limits.maxShardsPerNode > 0 &&
+    result.shardsPerNode > limits.maxShardsPerNode * 0.95
+  ) {
+    items.push({
+      id: nextId("w"),
+      level: "warning",
+      message: `Shards per data node (${result.shardsPerNode.toFixed(1)}) are close to or above cluster.max_shards_per_node (${limits.maxShardsPerNode}).`,
+    });
+  }
+
+  if (
+    limits?.floodStageDiskPercent !== undefined &&
+    Number.isFinite(limits.floodStageDiskPercent) &&
+    result.diskUsagePercent >= limits.floodStageDiskPercent - 5
+  ) {
+    items.push({
+      id: nextId("w"),
+      level: result.diskUsagePercent >= limits.floodStageDiskPercent ? "critical" : "warning",
+      message: `Estimated disk usage ${result.diskUsagePercent.toFixed(1)}% is near the flood-stage watermark (${limits.floodStageDiskPercent}%).`,
     });
   }
 
@@ -116,6 +148,7 @@ export function collectWarnings(
         id: nextId("w"),
         level: "warning",
         message: `Index "${ib.indexName}" average shard size ${ib.shardSizeGb.toFixed(2)} GB is below ${SHARD_SIZE_WARN_LOW} GB.`,
+        indexId: ib.indexId,
       });
     }
     if (ib.shardSizeGb > SHARD_SIZE_WARN_HIGH) {
@@ -123,6 +156,7 @@ export function collectWarnings(
         id: nextId("w"),
         level: "warning",
         message: `Index "${ib.indexName}" average shard size ${ib.shardSizeGb.toFixed(2)} GB is above ${SHARD_SIZE_WARN_HIGH} GB.`,
+        indexId: ib.indexId,
       });
     }
     if (ib.docsPerShard > DOCS_PER_SHARD_CRITICAL) {
@@ -130,6 +164,7 @@ export function collectWarnings(
         id: nextId("w"),
         level: "critical",
         message: `Index "${ib.indexName}" documents per shard exceed ${DOCS_PER_SHARD_CRITICAL}.`,
+        indexId: ib.indexId,
       });
     }
   }

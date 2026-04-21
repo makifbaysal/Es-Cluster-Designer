@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type {
   CalculationResult,
   ClusterConfig,
   IndexConfig,
+  UiTheme,
 } from "../types";
+import { useI18n } from "../i18n/I18nContext";
 import {
   BaklavaAlert,
   BaklavaProgressIndicator,
@@ -22,12 +24,27 @@ import {
 } from "../utils/nodeVisualization";
 
 type Props = {
+  theme: UiTheme;
   result: CalculationResult;
   cluster: ClusterConfig;
   indices: IndexConfig[];
 };
 
 const SHARD_WARN_GB = 28;
+
+function ilmTierVisual(theme: UiTheme, tier: "hot" | "warm" | "cold") {
+  const light = {
+    hot: { bg: "#fff7ed", border: "#fb923c", label: "#c2410c" },
+    warm: { bg: "#faf5ff", border: "#a78bfa", label: "#6d28d9" },
+    cold: { bg: "#eff6ff", border: "#60a5fa", label: "#1d4ed8" },
+  };
+  const dark = {
+    hot: { bg: "#2a1f14", border: "#ea580c", label: "#fdba74" },
+    warm: { bg: "#221528", border: "#9333ea", label: "#d8b4fe" },
+    cold: { bg: "#0f172a", border: "#3b82f6", label: "#93c5fd" },
+  };
+  return (theme === "dark" ? dark : light)[tier];
+}
 
 function formatCompact(n: number): string {
   if (!Number.isFinite(n) || n < 0) {
@@ -49,22 +66,31 @@ function formatGb(n: number): string {
   return `${n.toFixed(1)}GB`;
 }
 
-export function NodeBreakdownTable({ result, cluster, indices }: Props) {
-  const nodeColumns = useMemo(
+export function NodeBreakdownTable({ theme, result, cluster, indices }: Props) {
+  const { t } = useI18n();
+  const [hideMasterNodes, setHideMasterNodes] = useState(false);
+  const allNodeColumns = useMemo(
     () => [
       ...buildMasterNodeVisuals(result),
       ...buildDataNodeVisuals(cluster, indices, result),
     ],
     [cluster, indices, result]
   );
+  const visibleNodeColumns = useMemo(
+    () =>
+      hideMasterNodes
+        ? allNodeColumns.filter((n) => n.nodeRole !== "master")
+        : allNodeColumns,
+    [allNodeColumns, hideMasterNodes]
+  );
   const summary = useMemo(() => clusterVisualSummary(result), [result]);
 
   return (
     <section className="panel node-breakdown-panel">
-      <h2 className="panel-title">Node breakdown</h2>
+      <h2 className="panel-title">{t("nbPanelTitle")}</h2>
 
       <div className="nb-cluster-bar">
-        <div className="nb-cluster-title">Cluster</div>
+        <div className="nb-cluster-title">{t("nbClusterTitle")}</div>
         <div className="nb-cluster-badges">
           <MetricChip
             tone="cluster"
@@ -84,12 +110,28 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
         </div>
       </div>
 
-      {nodeColumns.length === 0 ? (
-        <p className="nb-empty">Add at least one master or data node to see nodes.</p>
+      {allNodeColumns.some((n) => n.nodeRole === "master") && (
+        <div className="nb-hide-masters-row">
+          <label className="nb-hide-masters-label" htmlFor="nb-hide-master-nodes">
+            <input
+              id="nb-hide-master-nodes"
+              type="checkbox"
+              checked={hideMasterNodes}
+              onChange={(e) => setHideMasterNodes(e.target.checked)}
+            />
+            {t("nbHideMasterNodes")}
+          </label>
+        </div>
+      )}
+
+      {allNodeColumns.length === 0 ? (
+        <p className="nb-empty">{t("nbEmptyNodes")}</p>
+      ) : visibleNodeColumns.length === 0 ? (
+        <p className="nb-empty">{t("nbHideMastersEmpty")}</p>
       ) : (
         <div className="nb-node-grid-scroll">
         <div className="nb-node-grid">
-          {nodeColumns.map((node) => {
+          {visibleNodeColumns.map((node) => {
             const isMaster = node.nodeRole === "master";
             const roleClass = isMaster ? " nb-node-column--master" : " nb-node-column--data";
             const capTone = isMaster ? " nb-node-cap--master" : " nb-node-cap--data";
@@ -100,14 +142,14 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
             >
               <div className={`nb-node-cap${capTone}`}>
                 <span className="nb-node-cap-role">
-                  {isMaster ? "Master" : "Data"}
+                  {isMaster ? t("nbMasterRole") : t("nbDataRole")}
                 </span>
                 <span className="nb-node-cap-name">{node.displayLabel}</span>
               </div>
               <div
                 className={`nb-node-shard-bar${isMaster ? " nb-node-shard-bar--master" : " nb-node-shard-bar--data"}`}
               >
-                <div className="nb-node-shard-bar-title">Shards & replicas</div>
+                <div className="nb-node-shard-bar-title">{t("nbShardsReplicasTitle")}</div>
                 <div className="nb-node-shard-bar-badges">
                   <MetricChip
                     tone="cluster"
@@ -124,7 +166,7 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
               {!isMaster && (
                 <div className="nb-node-metrics">
                   <div className="nb-block-label nb-block-label--node">
-                    Node summary
+                    {t("nbNodeSummary")}
                   </div>
                   <div className="nb-node-metrics-card nb-node-metrics-card--data">
                     <div className="nb-node-metrics-chips">
@@ -162,7 +204,8 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
                     {node.storageGb > 0 && (
                       <div className="nb-disk-progress">
                         <span className="nb-disk-progress-label">
-                          Disk {Math.round((node.dataStorageGb / node.storageGb) * 100)}%
+                          {t("nbDiskPct")}{" "}
+                          {Math.round((node.dataStorageGb / node.storageGb) * 100)}%
                         </span>
                         <BaklavaProgressIndicator
                           value={Math.round((node.dataStorageGb / node.storageGb) * 100)}
@@ -191,13 +234,13 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
                 {isMaster && (
                   <BaklavaAlert
                     variant="info"
-                    description="Dedicated master nodes manage cluster state only — they do not hold shards or serve read/write traffic."
+                    description={t("nbDedicatedMasterInfo")}
                   />
                 )}
                 {node.primaryShards.length > 0 && (
                   <div className="nb-primary-shards">
                     <div className="nb-block-label nb-block-label--primary">
-                      Primary shards
+                      {t("nbPrimaryShards")}
                     </div>
                     {node.primaryShards.map((p) => (
                       <div
@@ -231,7 +274,10 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
                         {p.shardSizeGb > SHARD_WARN_GB && (
                           <BaklavaAlert
                             variant="warning"
-                            description={`More than ${SHARD_WARN_GB}GB per shard is not a good idea.`}
+                            description={t("nbShardTooLarge").replace(
+                              "{n}",
+                              String(SHARD_WARN_GB)
+                            )}
                           />
                         )}
                       </div>
@@ -242,7 +288,7 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
                 {node.replicaShards.length > 0 && (
                   <div className="nb-replica-section">
                     <div className="nb-block-label nb-block-label--replica">
-                      Replicas
+                      {t("nbReplicasSection")}
                     </div>
                     <div className="nb-replica-row">
                       {node.replicaShards.map((r) => (
@@ -251,7 +297,7 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
                           className="nb-shard-card nb-shard-card--replica"
                         >
                           <div className="nb-shard-card-title nb-shard-card-title--replica">
-                            replica ({r.sourceShardLabel})
+                            {t("nbReplicaTitle")} ({r.sourceShardLabel})
                           </div>
                           <div className="nb-shard-pills nb-shard-pills--replica">
                             <MetricChip
@@ -281,7 +327,7 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
                 className={`nb-node-cap nb-node-cap--footer${capTone}`}
               >
                 <span className="nb-node-cap-role">
-                  {isMaster ? "Master" : "Data"}
+                  {isMaster ? t("nbMasterRole") : t("nbDataRole")}
                 </span>
                 <span className="nb-node-cap-name">{node.displayLabel}</span>
               </div>
@@ -294,17 +340,12 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
 
       {result.ilmBreakdown.enabled && (
         <div className="nb-ilm-breakdown">
-          <h3 className="nb-index-metrics-title">ILM tier breakdown</h3>
+          <h3 className="nb-index-metrics-title">{t("nbIlmTierTitle")}</h3>
           <div className="nb-ilm-tiers">
             {(["hot", "warm", "cold"] as const).map((tier) => {
-              const t = result.ilmBreakdown[tier];
-              if (t.nodeCount === 0 && tier !== "hot") return null;
-              const colors = {
-                hot: { bg: "#fff7ed", border: "#fb923c", label: "#c2410c" },
-                warm: { bg: "#faf5ff", border: "#a78bfa", label: "#6d28d9" },
-                cold: { bg: "#eff6ff", border: "#60a5fa", label: "#1d4ed8" },
-              };
-              const c = colors[tier];
+              const tierStats = result.ilmBreakdown[tier];
+              if (tierStats.nodeCount === 0 && tier !== "hot") return null;
+              const c = ilmTierVisual(theme, tier);
               return (
                 <div
                   key={tier}
@@ -312,18 +353,26 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
                   style={{ background: c.bg, borderColor: c.border }}
                 >
                   <div className="nb-ilm-tier-header" style={{ color: c.label }}>
-                    {tier.toUpperCase()} TIER
+                    {tier.toUpperCase()} {t("nbIlmTierSuffix")}
                   </div>
                   <div className="nb-ilm-tier-stats">
-                    <span>{t.nodeCount} nodes</span>
-                    <span>{t.usedDataGb.toFixed(1)} GB used</span>
-                    <span>{t.totalDiskGb.toFixed(0)} GB total</span>
+                    <span>
+                      {tierStats.nodeCount} {t("nbNodesCount")}
+                    </span>
+                    <span>
+                      {tierStats.usedDataGb.toFixed(1)} {t("nbGbUsed")}
+                    </span>
+                    <span>
+                      {tierStats.totalDiskGb.toFixed(0)} {t("nbGbTotal")}
+                    </span>
                   </div>
                   <BaklavaProgressIndicator
-                    value={Math.round(t.diskUsagePercent)}
-                    failed={t.diskUsagePercent >= 95}
+                    value={Math.round(tierStats.diskUsagePercent)}
+                    failed={tierStats.diskUsagePercent >= 95}
                   />
-                  <span className="nb-ilm-tier-pct">{t.diskUsagePercent.toFixed(1)}%</span>
+                  <span className="nb-ilm-tier-pct">
+                    {tierStats.diskUsagePercent.toFixed(1)}%
+                  </span>
                 </div>
               );
             })}
@@ -332,15 +381,15 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
       )}
 
       <div className="nb-index-metrics">
-        <h3 className="nb-index-metrics-title">Index metrics</h3>
+        <h3 className="nb-index-metrics-title">{t("nbIndexMetricsTitle")}</h3>
         <BaklavaTable>
           <BaklavaTableHeader>
             <BaklavaTableRow>
-              <BaklavaTableHeaderCell>Index</BaklavaTableHeaderCell>
-              <BaklavaTableHeaderCell>Shards</BaklavaTableHeaderCell>
-              <BaklavaTableHeaderCell>Shard size (GB)</BaklavaTableHeaderCell>
-              <BaklavaTableHeaderCell>Docs / shard</BaklavaTableHeaderCell>
-              <BaklavaTableHeaderCell>Data + replicas (GB)</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbIndexCol")}</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbShardsCol")}</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbShardSizeGbCol")}</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbDocsPerShardCol")}</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbDataReplicasGbCol")}</BaklavaTableHeaderCell>
             </BaklavaTableRow>
           </BaklavaTableHeader>
           <BaklavaTableBody>
