@@ -16,9 +16,15 @@ import { BaklavaButton, BaklavaInput } from "../baklava/components";
 
 type AuthMode = "none" | "basic" | "apiKey";
 
+export type EsConnection = {
+  baseUrl: string;
+  headers: Record<string, string>;
+};
+
 type Props = {
   setCluster: React.Dispatch<React.SetStateAction<ClusterConfig>>;
   setIndices: React.Dispatch<React.SetStateAction<IndexConfig[]>>;
+  onConnectionChange?: (conn: EsConnection | null) => void;
 };
 
 function readValue(e: Event): string {
@@ -65,7 +71,7 @@ function probePresentation(probe: ProbeResult | null): {
   };
 }
 
-export function EsConnectionPanel({ setCluster, setIndices }: Props) {
+export function EsConnectionPanel({ setCluster, setIndices, onConnectionChange }: Props) {
   const [baseUrl, setBaseUrl] = useState("");
   const [authMode, setAuthMode] = useState<AuthMode>("none");
   const [username, setUsername] = useState("");
@@ -129,6 +135,7 @@ export function EsConnectionPanel({ setCluster, setIndices }: Props) {
         return;
       }
       setConnected(true);
+      onConnectionChange?.({ baseUrl: normalizedUrl, headers });
     } finally {
       setBusy(null);
     }
@@ -140,6 +147,7 @@ export function EsConnectionPanel({ setCluster, setIndices }: Props) {
     setHintNotes(null);
     setPassword("");
     setApiKey("");
+    onConnectionChange?.(null);
   };
 
   const headersForRequests = () => {

@@ -64,7 +64,7 @@ body {
   gap: var(--bl-size-s, 12px);
 }
 
-@media (min-width: 600px) {
+@container (min-width: 480px) {
   .field-grid.cols-2 {
     grid-template-columns: 1fr 1fr;
   }
@@ -109,6 +109,12 @@ body {
 .config-accordion-stack bl-accordion-group {
   display: block;
   width: 100%;
+}
+
+.cluster-form-inner,
+.es-connection-inner {
+  container-type: inline-size;
+  min-width: 0;
 }
 
 .es-connection-inner .es-help-muted {
@@ -315,7 +321,7 @@ body {
 
 .heap-bar-row {
   display: grid;
-  grid-template-columns: 130px 1fr 60px;
+  grid-template-columns: minmax(80px, 130px) 1fr minmax(40px, 60px);
   align-items: center;
   gap: 10px;
   margin-bottom: 6px;
@@ -615,6 +621,18 @@ body {
 
 .mapping-modal-lead {
   margin: 0;
+}
+
+.mapping-es-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bl-size-s, 12px);
+}
+
+.mapping-doccount-row {
+  background: var(--bl-color-neutral-lightest, #f5f7fa);
+  border-radius: var(--bl-size-2xs, 4px);
+  padding: var(--bl-size-xs, 8px) var(--bl-size-s, 12px);
 }
 
 .mapping-json-editor {
@@ -923,12 +941,17 @@ body {
   font: var(--bl-font-body-text-2, inherit);
 }
 
+.nb-node-grid-scroll {
+  overflow-x: auto;
+  margin-bottom: var(--bl-size-l, 24px);
+  min-width: 0;
+}
+
 .nb-node-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--bl-size-m, 16px);
-  margin-bottom: var(--bl-size-l, 24px);
-  min-width: min(100%, 680px);
+  min-width: 0;
 }
 
 .nb-node-column {
@@ -1205,6 +1228,7 @@ body {
 
 .nb-index-metrics {
   margin-top: var(--bl-size-m, 16px);
+  overflow-x: auto;
 }
 
 .nb-index-metrics-title {

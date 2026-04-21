@@ -24,6 +24,21 @@ Single-page tool to estimate Elasticsearch cluster capacity from user-supplied t
 - **Download CSV** writes `elastic-calculator-export.csv`: first block is **state** (`elastic-calculator-state-v1`, cluster row, index rows — see `buildStateCsv` / `parseStateCsv` in `csvState.ts`). After `---node-export---`, the previous node/metrics dump is appended for reference; **import only reads the state block** (lines before `---`).
 - **Import CSV** loads cluster + indices from a file whose first line is `elastic-calculator-state-v1`. Mapping JSON per index is **not** included in CSV; imported indices get new ids. `generateIndexId` is exported from `storage.ts` for new index rows.
 
+## Elasticsearch Cluster Connection
+
+- `EsConnectionPanel` component handles cluster URL, auth (none / basic / apiKey), probe and connect flows
+- On successful connect, `onConnectionChange` callback fires with `EsConnection { baseUrl, headers }` — lifted to App and shared with `MappingModal`
+- **Cluster hints**: `fetchClusterHints` calls `/_cat/nodes?bytes=b&h=name,node.roles,ram.max,disk.total,heap.max` and parses node roles using both full names (`data`, `master`) and ES abbreviations (`d`, `m`, `data_hot`, etc.). Falls back to `/_cluster/stats` when `_cat/nodes` fails. Fills `dataNodeCount`, `masterNodeCount`, `memoryPerNode`, `totalDiskSize` in cluster config.
+- **Index import**: `fetchCatIndices` → `catRowsToIndexConfigs` populates doc count, store size, primary/replica shard counts.
+
+### Mapping Modal with live cluster data
+
+When `EsConnection` is available (cluster connected), the mapping modal shows two extra buttons:
+
+- **Load mapping from cluster**: calls `fetchIndexMappings` → `/{index}/_mapping`, extracts the `mappings` object and populates the JSON editor
+- **Fetch live doc count**: calls `fetchIndexDocCount` → `/_cat/indices/{index}?h=docs.count`, shows a checkbox to switch between stored and live doc count for size estimation
+- **Apply estimate**: if "use live doc count" is checked, applies updated `documentCount` to the index alongside `mapping` and `totalSize`
+
 ## UI
 
 - Baklava components: inputs, tables, alerts, dialogs, accordions for indices

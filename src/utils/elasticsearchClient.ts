@@ -57,14 +57,17 @@ export function buildEsHeaders(auth: EsAuth): Record<string, string> {
 type EsFetchFail = { ok: false; status: number; message: string };
 type EsFetchOk<T> = { ok: true; data: T };
 
-/** When true, requests go through Vite dev/preview middleware (same origin → no ES CORS needed). */
+/**
+ * When true, requests go through the Vite dev/preview proxy (/__elastic-proxy).
+ * In production (static deploy), requests go directly from the browser to ES —
+ * ES must have CORS configured, or the user must be on a VPN that allows direct access.
+ */
 export function shouldUseElasticsearchProxy(): boolean {
   if (typeof window === "undefined") return false;
-  const { hostname, protocol } = window.location;
+  const { protocol } = window.location;
   if (protocol !== "http:" && protocol !== "https:") return false;
-  // Dev server always mounts `elasticDevProxyPlugin` — use it for any hostname (e.g. vite --host / LAN IP).
   if (import.meta.env.DEV) return true;
-  const h = hostname.toLowerCase();
+  const h = window.location.hostname.toLowerCase();
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]";
 }
 
@@ -83,19 +86,19 @@ function messageForBrowserFetchFailure(baseUrl: string): string {
   const proxied = shouldUseElasticsearchProxy();
   if (cross && !proxied) {
     return (
-      "The browser blocked this request (CORS: Elasticsearch did not send Access-Control-Allow-Origin for this page). " +
-      "Open the app at http://127.0.0.1 or http://localhost and use npm run dev or npm run preview so traffic uses the built-in proxy, " +
-      "or enable http.cors.enabled / http.cors.allow-origin on Elasticsearch for your UI origin."
+      "The browser blocked this request (CORS). " +
+      "Make sure you are connected to the VPN so your browser can reach Elasticsearch directly, " +
+      "or add http.cors.enabled / http.cors.allow-origin to your elasticsearch.yml for this origin."
     );
   }
   return (
-    "Could not reach Elasticsearch (wrong URL/port, VPN or firewall, or TLS/certificate rejected). " +
+    "Could not reach Elasticsearch (wrong URL/port, VPN not connected, or TLS/certificate rejected). " +
     "If you use HTTPS against a self-signed cert, the browser may block the connection."
   );
 }
 
 const PROXY_MISSING_MESSAGE =
-  "The Vite dev proxy returned 404 — Elasticsearch calls cannot be forwarded. Use npm run dev or npm run preview (not npx serve, nginx, or opening dist/ as static files). Stop any old preview on this port, pull latest, run npm run build, then npm run preview again.";
+  "The Vite dev proxy returned 404 — Elasticsearch calls cannot be forwarded. Use npm run dev or npm run preview (not npx serve, nginx, or opening dist/ as static files).";
 
 function interpretElasticsearchResponse(res: Response, text: string): EsFetchFail | EsFetchOk<string> {
   let message = res.statusText || "Request failed";
@@ -235,46 +238,46 @@ export async function fetchCatIndices(
   }
 }
 
+function isDataNode(rolesRaw: string): boolean {
+  if (!rolesRaw.trim()) return true;
+  const abbreviations = new Set(["d", "data", "data_hot", "data_warm", "data_cold", "data_content", "data_frozen"]);
+  const parts = rolesRaw.split(/[,\s]+/).map((x) => x.trim().toLowerCase());
+  return parts.some((p) => abbreviations.has(p));
+}
+
+function isMasterEligibleNode(rolesRaw: string): boolean {
+  if (!rolesRaw.trim()) return true;
+  const parts = rolesRaw.split(/[,\s]+/).map((x) => x.trim().toLowerCase());
+  return parts.some((p) => p === "m" || p === "master");
+}
+
 export async function fetchClusterHints(
   baseUrl: string,
   headers: Record<string, string>
 ): Promise<
   { ok: true; patch: Partial<ClusterConfig>; notes: string[] } | { ok: false; message: string }
 > {
-  const statsR = await esFetchText(baseUrl, "/_cluster/stats", headers);
-  if (!statsR.ok) {
-    return { ok: false, message: statsR.message };
-  }
-
-  let stats: {
-    nodes?: { count?: Record<string, number> };
-  };
-  try {
-    stats = JSON.parse(statsR.data) as typeof stats;
-  } catch {
-    return { ok: false, message: "Could not parse cluster stats." };
-  }
-
-  const count = stats.nodes?.count ?? {};
-  const dataNodeCount = count.data ?? 0;
-  const masterEligible = count.master ?? 0;
-  const notes: string[] = [
-    "Master count uses master-eligible nodes from the API; adjust if you use dedicated masters only.",
-  ];
-
   const nodesR = await esFetchText(
     baseUrl,
-    "/_cat/nodes?format=json&bytes=b&h=name,node.roles,ram.max,disk.total",
+    "/_cat/nodes?format=json&bytes=b&h=name,node.roles,ram.max,disk.total,heap.max",
     headers
   );
 
-  const patch: Partial<ClusterConfig> = {
-    dataNodeCount: dataNodeCount > 0 ? dataNodeCount : undefined,
-    masterNodeCount: masterEligible > 0 ? masterEligible : undefined,
-  };
+  const notes: string[] = [];
+  const patch: Partial<ClusterConfig> = {};
 
   if (!nodesR.ok) {
-    notes.push("Could not read node RAM/disk; node fields left unchanged.");
+    const statsR = await esFetchText(baseUrl, "/_cluster/stats", headers);
+    if (!statsR.ok) return { ok: false, message: nodesR.message };
+    try {
+      const stats = JSON.parse(statsR.data) as { nodes?: { count?: Record<string, number> } };
+      const count = stats.nodes?.count ?? {};
+      if (count.data && count.data > 0) patch.dataNodeCount = count.data;
+      if (count.master && count.master > 0) patch.masterNodeCount = count.master;
+      notes.push("Used _cluster/stats for node counts; could not read _cat/nodes for RAM/disk.");
+    } catch {
+      return { ok: false, message: nodesR.message };
+    }
     return { ok: true, patch, notes };
   }
 
@@ -284,41 +287,97 @@ export async function fetchClusterHints(
       "node.roles"?: string;
       "ram.max"?: string;
       "disk.total"?: string;
+      "heap.max"?: string;
     }[];
 
     let ramSum = 0;
     let ramN = 0;
     let diskSum = 0;
+    let dataCount = 0;
+    let masterCount = 0;
 
     for (const row of rows) {
-      const rolesRaw = (row["node.roles"] ?? "").trim();
-      const roles = rolesRaw
-        ? rolesRaw.split(",").map((x) => x.trim())
-        : ["data", "master"];
-      const isData = roles.includes("data");
-      if (!isData) continue;
+      const rolesRaw = row["node.roles"] ?? "";
+      const nodeIsData = isDataNode(rolesRaw);
+      const nodeIsMaster = isMasterEligibleNode(rolesRaw);
 
-      const ramB = parseInt(row["ram.max"] ?? "0", 10);
-      const diskB = parseInt(row["disk.total"] ?? "0", 10);
-      if (Number.isFinite(ramB) && ramB > 0) {
-        ramSum += ramB;
-        ramN += 1;
-      }
-      if (Number.isFinite(diskB) && diskB > 0) {
-        diskSum += diskB;
+      if (nodeIsData) dataCount += 1;
+      if (nodeIsMaster) masterCount += 1;
+
+      if (nodeIsData) {
+        const ramB = parseInt(row["ram.max"] ?? "0", 10);
+        const diskB = parseInt(row["disk.total"] ?? "0", 10);
+        if (Number.isFinite(ramB) && ramB > 0) {
+          ramSum += ramB;
+          ramN += 1;
+        }
+        if (Number.isFinite(diskB) && diskB > 0) {
+          diskSum += diskB;
+        }
       }
     }
 
+    if (dataCount > 0) patch.dataNodeCount = dataCount;
+    if (masterCount > 0) patch.masterNodeCount = masterCount;
+
     if (ramN > 0) {
-      const avgGb = Math.max(1, Math.round(ramSum / ramN / 1024 ** 3));
-      patch.memoryPerNode = avgGb;
+      patch.memoryPerNode = Math.max(1, Math.round(ramSum / ramN / 1024 ** 3));
     }
     if (diskSum > 0) {
       patch.totalDiskSize = Math.max(0, Math.round(diskSum / 1024 ** 3));
+    }
+
+    if (masterCount > 0) {
+      notes.push(
+        `Found ${masterCount} master-eligible node(s) and ${dataCount} data node(s). Adjust if you use dedicated masters only.`
+      );
+    }
+    if (ramN === 0) {
+      notes.push("Could not read RAM for data nodes; memory field left unchanged.");
+    }
+    if (diskSum === 0) {
+      notes.push("Could not read disk total for data nodes; disk field left unchanged.");
     }
   } catch {
     notes.push("Could not parse node metrics.");
   }
 
   return { ok: true, patch, notes };
+}
+
+export async function fetchIndexMappings(
+  baseUrl: string,
+  indexName: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; mappingJson: string } | { ok: false; message: string }> {
+  const r = await esFetchText(baseUrl, `/${encodeURIComponent(indexName)}/_mapping`, headers);
+  if (!r.ok) return { ok: false, message: r.message };
+  try {
+    const raw = JSON.parse(r.data) as Record<string, { mappings?: unknown }>;
+    const indexData = raw[indexName] ?? Object.values(raw)[0];
+    const mappings = indexData?.mappings ?? {};
+    return { ok: true, mappingJson: JSON.stringify(mappings, null, 2) };
+  } catch {
+    return { ok: false, message: "Could not parse mapping response." };
+  }
+}
+
+export async function fetchIndexDocCount(
+  baseUrl: string,
+  indexName: string,
+  headers: Record<string, string>
+): Promise<{ ok: true; count: number } | { ok: false; message: string }> {
+  const r = await esFetchText(
+    baseUrl,
+    `/_cat/indices/${encodeURIComponent(indexName)}?format=json&h=docs.count`,
+    headers
+  );
+  if (!r.ok) return { ok: false, message: r.message };
+  try {
+    const rows = parseCatJsonArray(r.data) as { "docs.count"?: string }[];
+    const count = parseInt(rows[0]?.["docs.count"] ?? "0", 10) || 0;
+    return { ok: true, count };
+  } catch {
+    return { ok: false, message: "Could not parse doc count." };
+  }
 }

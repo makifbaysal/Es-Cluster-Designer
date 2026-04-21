@@ -5,7 +5,7 @@ import {
   BaklavaAlert,
 } from "./baklava/components";
 import { ClusterConfigForm } from "./components/ClusterConfigForm";
-import { EsConnectionPanel } from "./components/EsConnectionPanel";
+import { EsConnectionPanel, type EsConnection } from "./components/EsConnectionPanel";
 import { ComparePanel } from "./components/ComparePanel";
 import { Header } from "./components/Header";
 import { IndexList } from "./components/IndexList";
@@ -39,6 +39,8 @@ type ConfigurationSectionProps = {
   onSaveSnapshot: (label: string) => void;
   showCompare: boolean;
   onToggleCompare: () => void;
+  esConnection: EsConnection | null;
+  onConnectionChange: (conn: EsConnection | null) => void;
 };
 
 function ConfigurationSection({
@@ -51,6 +53,8 @@ function ConfigurationSection({
   onSaveSnapshot,
   showCompare,
   onToggleCompare,
+  esConnection,
+  onConnectionChange,
 }: ConfigurationSectionProps) {
   const [mappingOpen, setMappingOpen] = useState(false);
   const [mappingIndexId, setMappingIndexId] = useState<string | null>(null);
@@ -120,7 +124,11 @@ function ConfigurationSection({
       <div className="config-accordion-stack">
         <BaklavaAccordionGroup multiple>
           <BaklavaAccordion caption="Connect Cluster (Optional)" open>
-            <EsConnectionPanel setCluster={setCluster} setIndices={setIndices} />
+            <EsConnectionPanel
+              setCluster={setCluster}
+              setIndices={setIndices}
+              onConnectionChange={onConnectionChange}
+            />
           </BaklavaAccordion>
           <BaklavaAccordion caption="Cluster" open>
             <ClusterConfigForm
@@ -147,16 +155,22 @@ function ConfigurationSection({
       <MappingModal
         open={mappingOpen}
         index={mappingIndex}
+        esConnection={esConnection}
         onClose={() => {
           setMappingOpen(false);
           setMappingIndexId(null);
         }}
-        onApply={(mappingJson, sizeGb) => {
+        onApply={(mappingJson, sizeGb, docCount) => {
           if (!mappingIndexId) return;
           setIndices((prev) =>
             prev.map((x) =>
               x.id === mappingIndexId
-                ? { ...x, mapping: mappingJson, totalSize: sizeGb }
+                ? {
+                    ...x,
+                    mapping: mappingJson,
+                    totalSize: sizeGb,
+                    ...(docCount !== undefined ? { documentCount: docCount } : {}),
+                  }
                 : x
             )
           );
@@ -172,6 +186,7 @@ export default function App() {
 
   const [snapshots, setSnapshots] = useState<Snapshot[]>(() => loadSnapshots());
   const [showCompare, setShowCompare] = useState(false);
+  const [esConnection, setEsConnection] = useState<EsConnection | null>(null);
 
   const result = useMemo(
     () => calculateCluster(cluster, indices),
@@ -212,6 +227,8 @@ export default function App() {
             onSaveSnapshot={handleSaveSnapshot}
             showCompare={showCompare}
             onToggleCompare={() => setShowCompare((v) => !v)}
+            esConnection={esConnection}
+            onConnectionChange={setEsConnection}
           />
         </div>
         <div className="app-column">

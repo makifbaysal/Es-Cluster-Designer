@@ -87,6 +87,7 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
       {nodeColumns.length === 0 ? (
         <p className="nb-empty">Add at least one master or data node to see nodes.</p>
       ) : (
+        <div className="nb-node-grid-scroll">
         <div className="nb-node-grid">
           {nodeColumns.map((node) => {
             const isMaster = node.nodeRole === "master";
@@ -287,6 +288,7 @@ export function NodeBreakdownTable({ result, cluster, indices }: Props) {
             </div>
             );
           })}
+        </div>
         </div>
       )}
 
