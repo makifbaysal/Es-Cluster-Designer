@@ -393,9 +393,9 @@ body {
   font-size: var(--bl-font-body-text-3, 0.8125rem);
   font-weight: 400;
   line-height: 1.45;
-  color: var(--field-info-panel-color);
-  background: var(--field-info-panel-bg);
-  border: 1px solid var(--field-info-panel-border);
+  color: var(--field-info-panel-color, var(--bl-color-neutral-darker, #333));
+  background: var(--field-info-panel-bg, var(--bl-color-white, #fff));
+  border: 1px solid var(--field-info-panel-border, var(--bl-color-neutral-lighter, #ddd));
   border-radius: var(--bl-size-xs, 8px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
   pointer-events: auto;
@@ -411,6 +411,9 @@ body {
   position: relative;
   max-width: 100%;
   vertical-align: middle;
+  --field-info-panel-bg: #fff;
+  --field-info-panel-border: var(--bl-color-neutral-lighter, #ddd);
+  --field-info-panel-color: var(--bl-color-neutral-darker, #333);
 }
 
 .info-hint-inline__row {
