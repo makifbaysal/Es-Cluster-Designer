@@ -14,6 +14,8 @@ import { useI18n } from "../i18n/I18nContext";
 
 const TARGET_SHARD_GB = 40;
 
+type SuggestDiff = { oldVal: number; newVal: number };
+
 type Props = {
   index: IndexConfig;
   onChange: (next: IndexConfig) => void;
@@ -45,6 +47,7 @@ export function IndexForm({
   const [ilmPolicyPick, setIlmPolicyPick] = useState("");
   const [indexTplPick, setIndexTplPick] = useState("");
   const [clusterDataErr, setClusterDataErr] = useState<string | null>(null);
+  const [suggestDiff, setSuggestDiff] = useState<SuggestDiff | null>(null);
 
   const ilmOptions = useMemo(
     () => listIlmPolicyNamesFromRaw(ilmPoliciesJson),
@@ -76,9 +79,18 @@ export function IndexForm({
 
   const suggestShards = () => {
     if (index.totalSize <= 0) return;
-    const suggested = Math.max(1, Math.ceil(index.totalSize / TARGET_SHARD_GB));
-    patch({ primaryShardCount: suggested });
+    const newVal = Math.max(1, Math.ceil(index.totalSize / TARGET_SHARD_GB));
+    if (newVal === index.primaryShardCount) return;
+    setSuggestDiff({ oldVal: index.primaryShardCount, newVal });
   };
+
+  const applySuggest = () => {
+    if (suggestDiff === null) return;
+    patch({ primaryShardCount: suggestDiff.newVal });
+    setSuggestDiff(null);
+  };
+
+  const dismissSuggest = () => setSuggestDiff(null);
 
   const ilmEnabled = (index.retentionDays ?? 0) > 0;
 
@@ -159,6 +171,27 @@ export function IndexForm({
               Suggest
             </BaklavaButton>
           </div>
+          {suggestDiff !== null && (
+            <div className="suggest-diff-popup" role="dialog" aria-label={t("suggestPopupAria")}>
+              <div className="suggest-diff-body">
+                <span className="suggest-diff-old">
+                  {t("suggestOld")}: <strong>{suggestDiff.oldVal}</strong>
+                </span>
+                <span className="suggest-diff-arrow">→</span>
+                <span className="suggest-diff-new">
+                  {t("suggestNew")}: <strong>{suggestDiff.newVal}</strong>
+                </span>
+              </div>
+              <div className="suggest-diff-actions">
+                <BaklavaButton variant="primary" size="small" onBlClick={applySuggest}>
+                  {t("suggestApply")}
+                </BaklavaButton>
+                <BaklavaButton variant="secondary" size="small" onBlClick={dismissSuggest}>
+                  {t("suggestCancel")}
+                </BaklavaButton>
+              </div>
+            </div>
+          )}
           <BaklavaInput
             type="number"
             label=""

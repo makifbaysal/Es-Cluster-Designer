@@ -234,5 +234,24 @@ export function collectWarnings(
     });
   }
 
+  const totalDataCpuCores = cluster.dataNodeCount * cluster.cpuPerNode;
+  for (const ib of result.indexBreakdowns) {
+    if (ib.vectorFields.length === 0) continue;
+    const idx = indices.find((i) => i.id === ib.indexId);
+    const writeRate = idx?.writeRate ?? 0;
+    const vectorIndexingLoad = ib.vectorCpuFactor * writeRate;
+    const level =
+      totalDataCpuCores > 0 && vectorIndexingLoad > totalDataCpuCores * 500
+        ? "critical"
+        : "warning";
+    items.push({
+      id: nextId("w"),
+      level,
+      message: `Index "${ib.indexName}" has ${ib.vectorFields.length} HNSW vector graph field(s) across ${ib.hnswGraphCount} graph(s) — expect sustained CPU for graph maintenance and kNN search.`,
+      context: `Vector CPU factor ${ib.vectorCpuFactor.toFixed(1)} · fields: ${ib.vectorFields.map((f) => `${f.fieldPath} (dims=${f.dims}, m=${f.m})`).join(", ")}`,
+      indexId: ib.indexId,
+    });
+  }
+
   return items;
 }

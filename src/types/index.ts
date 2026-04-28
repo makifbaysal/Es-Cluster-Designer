@@ -4,7 +4,9 @@ export interface ClusterConfig {
   masterNodeCount: number;
   dataNodeCount: number;
   memoryPerNode: number;
+  memoryPerMasterNode?: number;
   cpuPerNode: number;
+  cpuPerMasterNode?: number;
   totalDiskSize: number;
   writeDominant?: boolean;
   warmNodeCount?: number;
@@ -70,6 +72,12 @@ export type IndexInsightBuckets = {
   recommendationsByIndexId: ReadonlyMap<string, RecommendationItem[]>;
 };
 
+export interface VectorFieldInfo {
+  fieldPath: string;
+  dims: number;
+  m: number;
+}
+
 export interface IndexBreakdown {
   indexId: string;
   indexName: string;
@@ -78,6 +86,9 @@ export interface IndexBreakdown {
   shardSizeGb: number;
   docsPerShard: number;
   dataWithReplicasGb: number;
+  vectorFields: VectorFieldInfo[];
+  hnswGraphCount: number;
+  vectorCpuFactor: number;
 }
 
 export interface NodeBreakdown {

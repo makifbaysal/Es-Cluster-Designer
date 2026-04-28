@@ -205,7 +205,7 @@ export function catRowsToIndexConfigs(
     if (!includeSystem && name.startsWith(".")) continue;
 
     const docs = parseInt(row["docs.count"] ?? "0", 10) || 0;
-    const storeBytes = parseInt(row["store.size"] ?? "0", 10) || 0;
+    const storeBytes = parseInt(row["pri.store.size"] ?? row["store.size"] ?? "0", 10) || 0;
     const pri = parseInt(row.pri ?? "1", 10) || 1;
     const rep = parseInt(row.rep ?? "0", 10) || 0;
 
@@ -223,12 +223,34 @@ export function catRowsToIndexConfigs(
   return out;
 }
 
+export async function fetchAllMappings(
+  baseUrl: string,
+  headers: Record<string, string>,
+  includeSystem: boolean
+): Promise<{ ok: true; mappingsByIndex: Record<string, string> } | { ok: false; message: string }> {
+  const path = includeSystem ? "/_mapping" : "/*/_mapping?expand_wildcards=open";
+  const r = await esFetchText(baseUrl, path, headers);
+  if (!r.ok) return { ok: false, message: r.message };
+  try {
+    const raw = JSON.parse(r.data) as Record<string, { mappings?: unknown }>;
+    const result: Record<string, string> = {};
+    for (const [indexName, indexData] of Object.entries(raw)) {
+      if (!includeSystem && indexName.startsWith(".")) continue;
+      const mappings = indexData.mappings ?? {};
+      result[indexName] = JSON.stringify(mappings, null, 2);
+    }
+    return { ok: true, mappingsByIndex: result };
+  } catch {
+    return { ok: false, message: "Could not parse mappings response." };
+  }
+}
+
 export async function fetchCatIndices(
   baseUrl: string,
   headers: Record<string, string>
 ): Promise<{ ok: true; rows: CatIndexRow[] } | { ok: false; message: string; status: number }> {
   const path =
-    "/_cat/indices?format=json&bytes=b&h=index,docs.count,store.size,pri,rep,status";
+    "/_cat/indices?format=json&bytes=b&h=index,docs.count,pri.store.size,pri,rep,status";
   const r = await esFetchText(baseUrl, path, headers);
   if (!r.ok) return { ok: false, message: r.message, status: r.status };
   try {
@@ -290,11 +312,13 @@ export async function fetchClusterHints(
       "heap.max"?: string;
     }[];
 
-    let ramSum = 0;
-    let ramN = 0;
+    let dataRamSum = 0;
+    let dataRamN = 0;
     let diskSum = 0;
     let dataCount = 0;
     let masterCount = 0;
+    let dedicatedMasterRamSum = 0;
+    let dedicatedMasterRamN = 0;
 
     for (const row of rows) {
       const rolesRaw = row["node.roles"] ?? "";
@@ -308,11 +332,17 @@ export async function fetchClusterHints(
         const ramB = parseInt(row["ram.max"] ?? "0", 10);
         const diskB = parseInt(row["disk.total"] ?? "0", 10);
         if (Number.isFinite(ramB) && ramB > 0) {
-          ramSum += ramB;
-          ramN += 1;
+          dataRamSum += ramB;
+          dataRamN += 1;
         }
         if (Number.isFinite(diskB) && diskB > 0) {
           diskSum += diskB;
+        }
+      } else if (nodeIsMaster) {
+        const ramB = parseInt(row["ram.max"] ?? "0", 10);
+        if (Number.isFinite(ramB) && ramB > 0) {
+          dedicatedMasterRamSum += ramB;
+          dedicatedMasterRamN += 1;
         }
       }
     }
@@ -320,11 +350,14 @@ export async function fetchClusterHints(
     if (dataCount > 0) patch.dataNodeCount = dataCount;
     if (masterCount > 0) patch.masterNodeCount = masterCount;
 
-    if (ramN > 0) {
-      patch.memoryPerNode = Math.max(1, Math.round(ramSum / ramN / 1024 ** 3));
+    if (dataRamN > 0) {
+      patch.memoryPerNode = Math.max(1, Math.round(dataRamSum / dataRamN / 1024 ** 3));
     }
     if (diskSum > 0) {
       patch.totalDiskSize = Math.max(0, Math.round(diskSum / 1024 ** 3));
+    }
+    if (dedicatedMasterRamN > 0) {
+      patch.memoryPerMasterNode = Math.max(1, Math.round(dedicatedMasterRamSum / dedicatedMasterRamN / 1024 ** 3));
     }
 
     if (masterCount > 0) {
@@ -332,7 +365,7 @@ export async function fetchClusterHints(
         `Found ${masterCount} master-eligible node(s) and ${dataCount} data node(s). Adjust if you use dedicated masters only.`
       );
     }
-    if (ramN === 0) {
+    if (dataRamN === 0) {
       notes.push("Could not read RAM for data nodes; memory field left unchanged.");
     }
     if (diskSum === 0) {
@@ -340,6 +373,43 @@ export async function fetchClusterHints(
     }
   } catch {
     notes.push("Could not parse node metrics.");
+  }
+
+  const cpuInfoR = await esFetchText(
+    baseUrl,
+    "/_nodes?filter_path=nodes.*.name,nodes.*.roles,nodes.*.os.available_processors",
+    headers
+  );
+  if (cpuInfoR.ok) {
+    try {
+      const cpuInfo = JSON.parse(cpuInfoR.data) as {
+        nodes?: Record<string, {
+          roles?: string[];
+          os?: { available_processors?: number };
+        }>;
+      };
+      let dataCpuSum = 0;
+      let dataCpuN = 0;
+      let masterCpuSum = 0;
+      let masterCpuN = 0;
+      for (const node of Object.values(cpuInfo.nodes ?? {})) {
+        const roles = node.roles ?? [];
+        const rolesStr = roles.join(",");
+        const nodeIsData = isDataNode(rolesStr);
+        const nodeIsMaster = isMasterEligibleNode(rolesStr);
+        const cpus = node.os?.available_processors;
+        if (typeof cpus === "number" && cpus > 0) {
+          if (nodeIsData) { dataCpuSum += cpus; dataCpuN += 1; }
+          else if (nodeIsMaster) { masterCpuSum += cpus; masterCpuN += 1; }
+        }
+      }
+      if (dataCpuN > 0) patch.cpuPerNode = Math.max(1, Math.round(dataCpuSum / dataCpuN));
+      if (masterCpuN > 0) patch.cpuPerMasterNode = Math.max(1, Math.round(masterCpuSum / masterCpuN));
+    } catch {
+      notes.push("Could not parse CPU info from /_nodes; CPU fields left unchanged.");
+    }
+  } else {
+    notes.push("Could not read CPU info from /_nodes; CPU fields left unchanged.");
   }
 
   return { ok: true, patch, notes };

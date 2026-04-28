@@ -390,6 +390,9 @@ export function NodeBreakdownTable({ theme, result, cluster, indices }: Props) {
               <BaklavaTableHeaderCell>{t("nbShardSizeGbCol")}</BaklavaTableHeaderCell>
               <BaklavaTableHeaderCell>{t("nbDocsPerShardCol")}</BaklavaTableHeaderCell>
               <BaklavaTableHeaderCell>{t("nbDataReplicasGbCol")}</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbVectorFieldsCol")}</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbHnswGraphsCol")}</BaklavaTableHeaderCell>
+              <BaklavaTableHeaderCell>{t("nbVectorCpuFactorCol")}</BaklavaTableHeaderCell>
             </BaklavaTableRow>
           </BaklavaTableHeader>
           <BaklavaTableBody>
@@ -404,10 +407,39 @@ export function NodeBreakdownTable({ theme, result, cluster, indices }: Props) {
                   })}
                 </BaklavaTableCell>
                 <BaklavaTableCell>{ib.dataWithReplicasGb.toFixed(2)}</BaklavaTableCell>
+                <BaklavaTableCell>
+                  {ib.vectorFields.length > 0 ? (
+                    <span
+                      className="nb-vector-badge"
+                      title={ib.vectorFields.map((f) => `${f.fieldPath} (dims=${f.dims}, m=${f.m})`).join("\n")}
+                    >
+                      {ib.vectorFields.length}
+                    </span>
+                  ) : (
+                    <span className="nb-vector-none">—</span>
+                  )}
+                </BaklavaTableCell>
+                <BaklavaTableCell>
+                  {ib.hnswGraphCount > 0 ? ib.hnswGraphCount : "—"}
+                </BaklavaTableCell>
+                <BaklavaTableCell>
+                  {ib.vectorCpuFactor > 0 ? (
+                    <span
+                      className={`nb-vector-cpu${ib.vectorCpuFactor >= 10 ? " nb-vector-cpu--high" : ib.vectorCpuFactor >= 3 ? " nb-vector-cpu--med" : ""}`}
+                    >
+                      {ib.vectorCpuFactor.toFixed(1)}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </BaklavaTableCell>
               </BaklavaTableRow>
             ))}
           </BaklavaTableBody>
         </BaklavaTable>
+        {result.indexBreakdowns.some((ib) => ib.vectorFields.length > 0) && (
+          <p className="nb-vector-footnote">{t("nbVectorFootnote")}</p>
+        )}
       </div>
     </section>
   );

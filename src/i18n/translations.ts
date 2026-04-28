@@ -55,9 +55,20 @@ const en: Record<string, string> = {
   clusterHintDataNodes:
     "Hot / data nodes: primary shard capacity and heap for indexed data live here. Increase count or RAM when disk or heap pressure is high.",
   clusterHintMemoryPerNode:
-    "RAM per node feeds the heap model (up to 50% of this value, capped at 31 GB per node) and OS page cache assumptions.",
+    "RAM per data node feeds the heap model (up to 50% of this value, capped at 31 GB per node) and OS page cache assumptions.",
+  clusterHintMemoryPerMasterNode:
+    "RAM per dedicated master node. Fetched automatically when connecting to a cluster with dedicated masters. Used for reference only — masters do not hold shards in this model.",
+  clusterHintCpuPerMasterNode:
+    "CPU cores per dedicated master node. For reference only — masters handle cluster state elections, not data indexing or search.",
+  clusterSectionMasterNodes: "Master nodes",
+  clusterSectionDataNodes: "Data (hot) nodes",
   clusterHintCpuPerNode:
-    "CPU per node is used only for light load heuristics in the calculator, not for precise throughput guarantees.",
+    "CPU cores per data node. Used only for light load heuristics in the calculator, not for precise throughput guarantees.",
+  suggestOld: "Current",
+  suggestNew: "Suggested",
+  suggestApply: "Apply",
+  suggestCancel: "Cancel",
+  suggestPopupAria: "Suggested value confirmation",
   clusterHintTotalHotDisk:
     "Total provisioned disk on the hot tier across all data nodes. The tool compares estimated data plus overhead to this footprint.",
   clusterHintWriteDominant:
@@ -157,6 +168,10 @@ const en: Record<string, string> = {
   nbShardSizeGbCol: "Shard size (GB)",
   nbDocsPerShardCol: "Docs / shard",
   nbDataReplicasGbCol: "Data + replicas (GB)",
+  nbVectorFieldsCol: "Vector fields",
+  nbHnswGraphsCol: "HNSW graphs",
+  nbVectorCpuFactorCol: "Vector CPU factor",
+  nbVectorFootnote: "Vector CPU factor = Σ(dims × m / 1000) per indexed dense_vector field. Higher means more CPU per doc indexed and per kNN query. HNSW graph count = vector fields × total shards.",
   navCost: "Cost",
   headerConnectCluster: "Connect cluster",
   esModalConnectTitle: "Connect cluster",
@@ -337,9 +352,15 @@ const tr: Record<string, string> = {
   clusterHintDataNodes:
     "Sıcak / data düğümleri: birincil shard kapasitesi ve indekslenen veri için heap burada hesaplanır. Disk veya heap baskısı yüksekse düğüm veya RAM artırın.",
   clusterHintMemoryPerNode:
-    "Düğüm başına RAM, heap modeline (bu değerin en fazla %50’si, düğüm başına 31 GB ile sınırlı) ve işletim sistemi sayfa önbelleği varsayımlarına girer.",
+    "Data düğüm başına RAM, heap modeline (bu değerin en fazla %50’si, düğüm başına 31 GB ile sınırlı) ve işletim sistemi sayfa önbelleği varsayımlarına girer.",
+  clusterHintMemoryPerMasterNode:
+    "Dedicated master düğüm başına RAM. Cluster bağlantısında dedicated master düğümler tespit edildiğinde otomatik çekilir. Yalnızca referans amaçlıdır; master’lar bu modelde shard tutmaz.",
   clusterHintCpuPerNode:
     "Düğüm başına CPU yalnızca hesaplayıcıdaki hafif yük sezgileri için kullanılır; gerçek iş hacmi garantisi vermez.",
+  clusterHintCpuPerMasterNode:
+    "Dedicated master düğüm başına CPU çekirdeği. Yalnızca referans amaçlıdır; master’lar küme durumu seçimlerini yönetir, veri indeksleme veya arama yapmaz.",
+  clusterSectionMasterNodes: "Master düğümler",
+  clusterSectionDataNodes: "Data (sıcak) düğümler",
   clusterHintTotalHotDisk:
     "Sıcak katmanda tüm veri düğümleri üzerindeki toplam ayrılan disk. Tahmini veri artı ek yük bu kapasiteyle karşılaştırılır.",
   clusterHintWriteDominant:
@@ -439,6 +460,10 @@ const tr: Record<string, string> = {
   nbShardSizeGbCol: "Shard boyutu (GB)",
   nbDocsPerShardCol: "Doküman / shard",
   nbDataReplicasGbCol: "Veri + replica (GB)",
+  nbVectorFieldsCol: "Vektör alanları",
+  nbHnswGraphsCol: "HNSW grafikleri",
+  nbVectorCpuFactorCol: "Vektör CPU faktörü",
+  nbVectorFootnote: "Vektör CPU faktörü = Σ(boyut × m / 1000) her indekslenmiş dense_vector alanı için. Yüksek değer, indekslenen doc başına ve kNN sorgusu başına daha fazla CPU anlamına gelir. HNSW grafik sayısı = vektör alanı × toplam shard.",
   navCost: "Maliyet",
   headerConnectCluster: "Küme bağlantısı",
   esModalConnectTitle: "Kümeye bağlan",
@@ -561,6 +586,11 @@ const tr: Record<string, string> = {
   compareSnapLine: "{nodes} veri düğümü · {indices} indeks",
   compareLoadDesigner: "Tasarımcıda aç",
   compareDeleteSnapshot: "Sil",
+  suggestOld: "Mevcut",
+  suggestNew: "Öneri",
+  suggestApply: "Uygula",
+  suggestCancel: "İptal",
+  suggestPopupAria: "Önerilen değer onayı",
 };
 
 export function translate(locale: UiLocale, key: string): string {

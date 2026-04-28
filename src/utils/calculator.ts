@@ -13,6 +13,7 @@ import type {
 import { buildRecommendations } from "./recommender";
 import { collectWarnings } from "./limitChecker";
 import { heapPerNodeGb, maxShardsForHeap } from "./heap";
+import { parseVectorFieldsFromMapping, vectorCpuFactor } from "./vectorMapping";
 
 export { heapPerNodeGb, maxShardsForHeap } from "./heap";
 
@@ -51,6 +52,9 @@ export function buildIndexBreakdown(idx: IndexConfig): IndexBreakdown {
   const totalShards = indexTotalShards(idx);
   const shardSizeGb = primary > 0 ? idx.totalSize / primary : 0;
   const docsPerShard = primary > 0 ? idx.documentCount / primary : 0;
+  const vectorFields = parseVectorFieldsFromMapping(idx.mapping ?? "");
+  const cpuFactor = vectorCpuFactor(vectorFields);
+  const hnswGraphCount = vectorFields.length * totalShards;
   return {
     indexId: idx.id,
     indexName: idx.name,
@@ -59,6 +63,9 @@ export function buildIndexBreakdown(idx: IndexConfig): IndexBreakdown {
     shardSizeGb,
     docsPerShard,
     dataWithReplicasGb: indexDataWithReplicasGb(idx),
+    vectorFields,
+    hnswGraphCount,
+    vectorCpuFactor: cpuFactor,
   };
 }
 

@@ -3,6 +3,7 @@ import type { ClusterConfig, IndexConfig } from "../types";
 import {
   buildEsHeaders,
   catRowsToIndexConfigs,
+  fetchAllMappings,
   fetchCatIndices,
   fetchClusterHints,
   fetchIlmPoliciesJson,
@@ -209,15 +210,26 @@ export function EsConnectionPanel({
       setConnectError("No open indices matched (try including system indices).");
       return false;
     }
+    const mappingsR = await fetchAllMappings(normalizedUrl, headers, includeSystemIndices);
+    const mappingsByIndex = mappingsR.ok ? mappingsR.mappingsByIndex : {};
+    const mappedCount = Object.keys(mappingsByIndex).length;
+    const withMappings = imported.map((idx) =>
+      mappingsByIndex[idx.name] ? { ...idx, mapping: mappingsByIndex[idx.name] } : idx
+    );
     if (mode === "replace") {
-      setIndices(imported);
+      setIndices(withMappings);
     } else {
       setIndices((prev) => {
         const names = new Set(prev.map((i) => i.name));
-        const toAdd = imported.filter((i) => !names.has(i.name));
+        const toAdd = withMappings.filter((i) => !names.has(i.name));
         return [...prev, ...toAdd];
       });
     }
+    const docNote = `Doc counts loaded from cluster (${withMappings.length} entries).`;
+    const mapNote = mappingsR.ok
+      ? `Mappings fetched for ${mappedCount} entries — vector analysis applied.`
+      : `Mappings could not be fetched — vector analysis skipped.`;
+    setHintNotes((prev) => [...(prev ?? []), docNote, mapNote]);
     return true;
   };
 
